@@ -59,8 +59,11 @@ DEVA = re.compile(r"[ऀ-ॿ]")
 # Grammar labels that open an entry, as printed (with OCR variants:
 # "पु" for "पुं", missing dots and spaces).
 GRAMMAR = r"(?:पुं?|नपुं?|वि|स्त्री|अव्य|क्रि|सर्व|संख्या|उभ|भ्वा|अदा|जुहो|दिवा|स्वा|तुदा|रुधा|तना|क्र्या|चुरा|आ|पर)"
+# A headword: optional "*", then a letter (not a vowel sign), then letters
+# and signs only, so continuation lines like "सम.-पुः" or "-ष्ठः" never match.
+HEAD = r"[*]?[ऄ-हक़-ॡॲ-ॿ][ऀ-ॣ‌‍]*"
 ENTRY_START = re.compile(
-    r"^\s*(?P<head>[ऀ-ॿ*][^\s(\[]*(?:\s*,\s*[ऀ-ॿ][^\s(\[,]*){0,4})\s*,?\s*"
+    r"^\s*(?P<head>" + HEAD + r"(?:\s*,\s*" + HEAD + r"){0,4})\s*,?\s*"
     r"[\(\[{]\s*" + GRAMMAR + r"[\s.)०॰,]")
 GRAMMAR_KEY = {"पु": "पुं", "पुं": "पुं", "नपु": "नपुं", "नपुं": "नपुं", "वि": "वि",
                "स्त्री": "स्त्री", "अव्य": "अव्य"}
@@ -101,13 +104,32 @@ def read_page(tsv_path):
     return out, (page_w, page_h)
 
 
+def at_column_edge(lines, page_w, window=4, indent=0.009):
+    """For each line, whether it starts at its column's left edge. Entries
+    start there; continuation lines have a hanging indent. The page is a
+    photo, so the edge drifts with skew: compare each line with the lines
+    around it in the same column rather than with a page-wide edge."""
+    flags = [False] * len(lines)
+    for col in (0, 1):
+        idx = [i for i, l in enumerate(lines) if (l["box"][0] >= page_w * 0.45) == bool(col)]
+        idx.sort(key=lambda i: lines[i]["box"][1])
+        for n, i in enumerate(idx):
+            near = idx[max(0, n - window): n + window + 1]
+            edge = min(lines[k]["box"][0] for k in near)
+            flags[i] = lines[i]["box"][0] - edge <= page_w * indent
+    return flags
+
+
 def segment_entries(pages):
-    """Cut the line stream of several pages into printed entries."""
+    """Cut the line stream of several pages into printed entries. A new entry
+    starts at a line that begins at a column's left edge (continuation lines
+    have a hanging indent) with headword(s) followed by a grammar label."""
     entries = []
     cur = None
-    for page_no, lines, _size in pages:
-        for ln in lines:
-            m = ENTRY_START.match(ln["text"])
+    for page_no, lines, (page_w, _h) in pages:
+        edge = at_column_edge(lines, page_w)
+        for ln, at_edge in zip(lines, edge):
+            m = ENTRY_START.match(ln["text"]) if at_edge else None
             if m:
                 heads = [h.strip(" ,") for h in m.group("head").split(",") if h.strip(" ,")]
                 cur = {"page": page_no, "heads": heads, "lines": []}
@@ -150,12 +172,12 @@ def load_corpus(db_path):
         text = " ".join(p for p in parts if p)
         if kind == "main":
             m = {"id": id_, "headword": hw, "stem": stem or hw, "grammar": grammar, "text": text,
-                 "keys": {normalize(hw), normalize(stem or hw)}}
+                 "keys": {ocr_key(hw), ocr_key(stem or hw)}}
             mains.append(m)
             by_main[id_] = m
         else:
             by_main[main_id]["text"] += " " + text
-            by_main[main_id]["keys"].add(normalize(hw))
+            by_main[main_id].setdefault("sub_keys", set()).add(ocr_key(hw))
     return mains
 
 
@@ -168,6 +190,13 @@ def tokens(text):
     return [w for w in t.split() if DEVA.search(w) or w.isdigit()]
 
 
+def ocr_key(text):
+    """Headword key that also forgives Tesseract's commonest slips: dropped
+    anusvara/candrabindu, nukta and a lost virama (joiners are already
+    removed by normalize)."""
+    return re.sub("[\u0900-\u0902\u093c\u094d]", "", normalize(text))
+
+
 def similar(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
@@ -178,7 +207,7 @@ def head_score(entry, main):
     """How well a printed entry's headwords match a digital main entry."""
     best = 0.0
     for h in entry["heads"]:
-        k = normalize(h)
+        k = ocr_key(h)
         if not k:
             continue
         for mk in main["keys"]:
@@ -187,31 +216,64 @@ def head_score(entry, main):
     return best
 
 
-def align(entries, mains, start, lookahead=25, threshold=0.75):
-    """Monotone alignment: each printed entry takes the best-matching digital
-    main entry within `lookahead` of the current position, then absorbs the
-    following digital entries that match its other listed headwords."""
-    j = start
-    for e in entries:
-        cands = [(head_score(e, mains[k]), -(k - j), k) for k in range(j, min(j + lookahead, len(mains)))]
-        score, _, k = max(cands) if cands else (0, 0, None)
-        if score < threshold:
-            e["match"] = []
+def align(entries, mains, start, end, threshold=0.88):
+    """Global, order-preserving alignment of printed entries with digital
+    main entries mains[start:end] (dynamic programming, as in sequence
+    alignment). A pair scores its headword similarity when that is at least
+    `threshold`; gaps cost nothing, so OCR noise in one headword cannot
+    derail its neighbours. Each printed entry then also absorbs unmatched
+    digital entries right after its match that carry one of its other listed
+    headwords (print often lists अंशुक, अंशुकम् together)."""
+    seg = mains[start:end]
+    n, m = len(entries), len(seg)
+    score = [[0.0] * (m + 1) for _ in range(n + 1)]
+    move = [[0] * (m + 1) for _ in range(n + 1)]  # 0 pair, 1 skip printed, 2 skip digital
+    for i in range(1, n + 1):
+        e = entries[i - 1]
+        for j in range(1, m + 1):
+            best, mv = score[i - 1][j], 1
+            if score[i][j - 1] > best:
+                best, mv = score[i][j - 1], 2
+            sc = head_score(e, seg[j - 1])
+            if sc >= threshold and score[i - 1][j - 1] + sc > best:
+                best, mv = score[i - 1][j - 1] + sc, 0
+            score[i][j], move[i][j] = best, mv
+    i, j, pairs = n, m, {}
+    while i > 0 and j > 0:
+        if move[i][j] == 0:
+            pairs[i - 1] = j - 1
+            i, j = i - 1, j - 1
+        elif move[i][j] == 1:
+            i -= 1
+        else:
+            j -= 1
+    used = set(pairs.values())
+    owner_of = {k: i for i, k in pairs.items()}
+    for i, e in enumerate(entries):
+        e["match"], e["skipped"] = [], []
+        if i not in pairs:
             continue
-        e["skipped"] = list(range(j, k))  # digital entries passed over
-        e["match"] = [k]
+        k = pairs[i]
+        e["match"] = [start + k]
+        e["score"] = round(head_score(e, seg[k]), 3)
         k += 1
-        while k < len(mains) and head_score(e, mains[k]) >= 0.9:
-            e["match"].append(k)
+        while k < m and k not in used and head_score(e, seg[k]) >= 0.9:
+            e["match"].append(start + k)
+            used.add(k)
             k += 1
-        e["score"] = round(score, 3)
-        j = k
-    return j
+    # Digital entries no printed entry claimed, attributed (for the report)
+    # to the printed entry they follow.
+    last = None
+    for k in range(m):
+        if k in owner_of:
+            last = owner_of[k]
+        elif k not in used and last is not None:
+            entries[last]["skipped"].append(start + k)
 
 
 # -------------------------------------------------------------- comparison
 
-def compare_entry(e, mains, vocab):
+def compare_entry(e, mains, vocab, window_keys=frozenset()):
     findings = []
     digital_text = " ".join(mains[k]["text"] for k in e["match"])
     d_tok = tokens(digital_text)
@@ -231,7 +293,13 @@ def compare_entry(e, mains, vocab):
         lines = sorted({p_meta[i][1] for i in range(i1, i2)}) or [p_meta[min(i1, len(p_meta) - 1)][1]]
         mean = sum(confs) / len(confs) if confs else 0
         ctx_d = " ".join(d_tok[max(0, j1 - 4):j2 + 4])
-        if op in ("insert", "replace") and len(pw) >= 3 and len(dw) <= len(pw) // 3 and mean >= 80:
+        # Printed words that are real dictionary words (OCR junk is not).
+        known = sum(1 for w in pw if vocab[w] >= 2 and not w.isdigit()) / max(len(pw), 1)
+        # A run that starts with a headword the digital text has elsewhere is
+        # a following entry whose start OCR missed, not a missing passage.
+        starts_entry = any(ocr_key(w) in window_keys for w in pw[:3] if len(w) > 2)
+        if op in ("insert", "replace") and len(pw) >= 4 and len(dw) <= len(pw) // 3 and mean >= 80 \
+                and known >= 0.7 and not starts_entry:
             findings.append(("missing_in_digital", pw, dw, mean, lines, ctx_d))
         elif op in ("delete", "replace") and len(dw) >= 4 and len(pw) <= len(dw) // 4:
             findings.append(("missing_in_print", pw, dw, mean, lines, ctx_d))
@@ -247,7 +315,10 @@ def compare_entry(e, mains, vocab):
     g_print = e.get("grammar")
     g_dig = mains[e["match"][0]]["grammar"] or ""
     g_dig_key = next((GRAMMAR_KEY[g] for g in re.findall(r"[ऀ-ॿ]+", g_dig) if g in GRAMMAR_KEY), None)
-    if g_print and g_dig_key and g_print != g_dig_key:
+    # Only meaningful for the same headword: print often gives the adjective
+    # with its noun forms inline, where the digital text has split entries.
+    same_head = ocr_key(e["heads"][0]) == ocr_key(mains[e["match"][0]]["headword"])
+    if g_print and g_dig_key and g_print != g_dig_key and same_head:
         findings.append(("grammar", [g_print], [g_dig], 100, [0], g_dig))
     return findings
 
@@ -277,6 +348,17 @@ LABEL = {
     "entry_missing_in_print": "Digital entry not seen in print",
 }
 ORDER = list(LABEL)
+# Precision measured by checking samples against the scan by eye (batch 1,
+# PDF pages 19-50). Low-precision categories start hidden in the report.
+PRECISION = {
+    "missing_in_digital": "~60% real",
+    "missing_in_print": "mostly OCR noise",
+    "spelling": "~90% real",
+    "grammar": "real differences; print itself is often the one in error",
+    "entry_missing_in_digital": "~80% real; read the true headword from the crop",
+    "entry_missing_in_print": "mostly OCR missing the entry start",
+}
+HIDDEN = {"missing_in_print", "entry_missing_in_print"}
 
 
 def main():
@@ -300,26 +382,44 @@ def main():
     mains = load_corpus(args.db)
     vocab = collections.Counter(t for m in mains for t in tokens(m["text"]))
 
-    # Start the alignment at the first confident match of the first entries.
-    start = 0
-    for e in entries[:5]:
-        scores = [(head_score(e, m), -k, k) for k, m in enumerate(mains[:3000])]
-        s, _, k = max(scores)
-        if s >= 0.9:
-            start = max(k - 2, 0)
-            break
-    end = align(entries, mains, start)
+    # The digital range this batch covers: from the first to the last
+    # printed entry whose headword matches a digital headword exactly.
+    index = collections.defaultdict(list)
+    for k, m in enumerate(mains):
+        for key in m["keys"]:
+            index[key].append(k)
+
+    def anchor(seq, pick):
+        for e in seq:
+            hits = [k for h in e["heads"] for k in index.get(ocr_key(h), [])]
+            if hits:
+                return pick(hits)
+        return None
+    first = anchor(entries[:20], min) or 0
+    last = anchor(list(reversed(entries[-20:])), max) or len(mains) - 1
+    start, end = max(first - 3, 0), min(last + 4, len(mains))
+    align(entries, mains, start, end)
+    all_keys = set(index) | {k for m in mains for k in m.get("sub_keys", ())}
+    window_keys = {k for m in mains[start:end] for k in m["keys"] | m.get("sub_keys", set()) if k}
 
     findings = []
     for e in entries:
         if not e["match"]:
-            findings.append(dict(type="entry_missing_in_digital", entry=e, printed=" ".join(e["heads"]),
-                                 digital="", conf=None, lines=[0]))
+            # A candidate only if no digital headword anywhere (main or
+            # sub-entry, allowing common nominative endings) has this key.
+            keys = {ocr_key(h) for h in e["heads"]}
+            variants = {k + suf for k in keys for suf in ("", "म", "ः", "ा", "ी")}
+            # ...and no headword in this stretch of the alphabet is a near
+            # match either (bold ज is often read as न, ङ्ग as ड्, etc.).
+            near = max((similar(k, dk) for k in keys for dk in window_keys), default=0)
+            if not variants & all_keys and near < 0.8:
+                findings.append(dict(type="entry_missing_in_digital", entry=e, printed=" ".join(e["heads"]),
+                                     digital="", conf=None, lines=[0]))
             continue
         for k in e.get("skipped", []):
             findings.append(dict(type="entry_missing_in_print", entry=e, printed="",
                                  digital=mains[k]["headword"], digital_id=mains[k]["id"], conf=None, lines=[0]))
-        for typ, pw, dw, conf, lines, ctx in compare_entry(e, mains, vocab):
+        for typ, pw, dw, conf, lines, ctx in compare_entry(e, mains, vocab, window_keys):
             findings.append(dict(type=typ, entry=e, printed=" ".join(pw), digital=" ".join(dw),
                                  context=ctx, conf=round(conf), lines=lines))
 
@@ -372,10 +472,13 @@ def write_html(args, findings, summary, mains):
         by_page = collections.defaultdict(list)
         for ln in lines:
             by_page[ln["page"]].append(ln["box"])
-        imgs = "".join(f'<img alt="scan" src="{crop(os.path.join(args.ocr_dir, f"p-{p:04d}.png"), b)}">'
-                       for p, b in by_page.items())
+        # No crops for the low-precision categories: keeps the page small.
+        imgs = "" if f["type"] in HIDDEN else "".join(
+            f'<img alt="scan" src="{crop(os.path.join(args.ocr_dir, f"p-{p:04d}.png"), b)}">'
+            for p, b in by_page.items())
         link = f'{args.app_url}#/e/{f["digital_id"]}' if f["digital_id"] else ""
-        cards.append(f"""<article class="f t-{f['type']}" data-type="{f['type']}">
+        hidden = " hidden" if f["type"] in HIDDEN else ""
+        cards.append(f"""<article class="f t-{f['type']}" data-type="{f['type']}"{hidden}>
   <header><b>{esc(f['fid'])}</b> · PDF p.{e['page']} · <span class="tag">{esc(LABEL[f['type']])}</span>
   · <span class="hw">{esc(' / '.join(e['heads']))}</span>
   {f'· <a href="{esc(link)}" target="_blank" rel="noopener">digital entry</a>' if link else ''}
@@ -386,7 +489,8 @@ def write_html(args, findings, summary, mains):
       {f"<dt>Digital context</dt><dd class='ctx'>{esc(f.get('context',''))}</dd>" if f.get('context') else ''}</dl>
 </article>""")
     s = summary
-    counts = "".join(f'<label><input type="checkbox" checked value="{k}"> {esc(LABEL[k])} <b>{v}</b></label>'
+    counts = "".join(f'<label><input type="checkbox" {"" if k in HIDDEN else "checked"} value="{k}"> '
+                     f'{esc(LABEL[k])} <b>{v}</b> <small>({esc(PRECISION[k])})</small></label>'
                      for k, v in s["findings"].items())
     doc = f"""<!doctype html><html lang="hi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
