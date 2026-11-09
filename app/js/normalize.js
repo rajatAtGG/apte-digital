@@ -35,7 +35,7 @@ export function normalizeWords(text) {
 }
 
 // A looser key, used only in the app for typo tolerance. It folds the
-// distinctions people most often get wrong when typing romanised Sanskrit:
+// distinctions people most often get wrong when spelling Sanskrit:
 // vowel length, aspiration (ध/द), retroflex vs dental (ट/त), the three
 // sibilants, ri/ṛ, and any remaining nasal cluster vs anusvara. It is never
 // stored or displayed; matches through it rank below exact/prefix matches.

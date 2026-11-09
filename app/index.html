@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>आप्टे कोश: Sanskrit-Hindi Dictionary</title>
-  <meta name="description" content="V. S. Apte's Sanskrit-Hindi dictionary, offline. Search in Devanagari, IAST, Harvard-Kyoto, ITRANS, SLP1 or WX.">
+  <meta name="description" content="V. S. Apte's Sanskrit-Hindi dictionary, fully offline.">
   <meta name="theme-color" content="#7a2e1d" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1b1714" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.webmanifest">
@@ -31,10 +31,8 @@
               title="Switch between Sanskrit → Hindi and Hindi → Sanskrit">सं→हि</button>
       <input id="q" type="search" inputmode="search" enterkeyhint="search"
              autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-             placeholder="खोजें · search (kamala, kṛṣṇa, धर्म)" aria-label="Search">
-      <button class="scheme" id="scheme" type="button" aria-label="Input method">Auto</button>
+             lang="sa" placeholder="संस्कृत शब्द खोजें · धर्म, कमल" aria-label="खोजें">
     </div>
-    <div class="readings" id="readings" aria-live="polite"></div>
   </header>
 
   <main id="main">
@@ -57,14 +55,6 @@
     <a href="#/saved" data-tab="saved"><span class="ti">☆</span><span>सहेजे</span></a>
     <a href="#/settings" data-tab="settings"><span class="ti">⚙</span><span>सेटिंग</span></a>
   </nav>
-
-  <dialog id="scheme-dialog" class="sheet">
-    <form method="dialog">
-      <h2>Input method</h2>
-      <div id="scheme-options" class="options"></div>
-      <button class="btn" value="close">Done</button>
-    </form>
-  </dialog>
 
   <script type="module" src="js/app.js"></script>
 </body>

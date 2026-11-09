@@ -8,24 +8,23 @@ GitHub Pages by `.github/workflows/pages.yml` (https://rajatatgg.github.io/apte-
 
 ## Using the app
 
-- **Search** in Devanagari or any romanisation: IAST (`kṛṣṇa`), Harvard-Kyoto
-  (`kRSNa`), ITRANS (`kRiShNa`), SLP1 (`kfzRa`) or WX (`kqRNa`). With **Auto**
-  every scheme is tried, and the line under the search box shows how your input
-  was read. Results update as you type. Matching uses exact match, then prefix,
-  then a "loose" key (vowel length, aspiration, sibilants, ṛ/ri, nasals), then
-  typo tolerance (1–2 edits). Plain spellings such as `krishna`, `shiva` and
-  `sanskrit` therefore work too.
+- **Search** in Devanagari; input and results are both Devanagari only. Results
+  update as you type. Matching tries, in order: exact match, then prefix, then
+  a "loose" key, then typo tolerance (1–2 edits). The exact and prefix steps
+  ignore visarga, anusvara/nasal-cluster spellings and `*`. The loose key also
+  ignores vowel length, aspiration, the sibilants, ṛ/रि and dental/retroflex.
+  So `राम` finds रामः, `शंकर` finds शङ्करः, and `क्रिश्न` or `दर्म` still find
+  कृष्ण and धर्म.
 - **Reverse search**: tap **सं→हि** to switch to **हि→सं**, then type a Hindi word
   (`प्याला`). This lists the Sanskrit headwords whose senses contain it, with the
   matching sense highlighted.
-- **Entries** look like the printed page: the headword (with an optional IAST
-  reading aid), grammar, stem, etymology, numbered senses with citations,
+- **Entries** look like the printed page: the headword, grammar, stem, etymology, numbered senses with citations,
   semantic categories, then the sub-entries and compounds as collapsible
   sections. Arrows step to the previous and next headword in dictionary order.
 - **Browse** by letter in varnamala order (स्वर, कवर्ग … ऊष्म).
 - **Bookmarks** and **recent searches** are kept on the device (localStorage).
-- **Settings**: light, dark or system theme; text size; default input method;
-  IAST and category display; offline status. **About** gives the credits and
+- **Settings**: light, dark or system theme; text size; category display;
+  offline status. **About** gives the credits and
   the licence.
 
 To install it, open the site, then use *Add to Home screen* (iOS Safari: Share,
@@ -33,7 +32,8 @@ then Add to Home Screen). On the first visit the service worker stores the app
 and the 11.5 MB compressed dictionary. After that everything runs offline: the
 database is decompressed in the browser and queried with SQLite compiled to
 WebAssembly (`@sqlite.org/sqlite-wasm`, which, unlike the stock sql.js build,
-includes FTS5).
+includes FTS5). There is no transliteration: type with a Devanagari keyboard
+(Android: Gboard Hindi/Sanskrit; iOS: the Hindi Devanagari keyboard).
 
 ## Credits and licence
 
@@ -209,7 +209,6 @@ pipeline/normalize.py     search keys, varnamala collation
 pipeline/build.py         dicts -> SQLite/FTS5 + JSON + validation report
 pipeline/expected.json    the counts the build must reproduce
 app/                      the PWA (plain ES modules, no bundler)
-  js/translit.js          IAST / HK / ITRANS / SLP1 / WX <-> Devanagari
   js/normalize.js         JS port of the search-key normaliser + loose key
   js/search.js            in-memory headword index: exact/prefix/loose/fuzzy
   js/dict.js              queries (search, reverse, entry tree, browse)
@@ -219,7 +218,7 @@ app/                      the PWA (plain ES modules, no bundler)
 scripts/build-app.mjs     app/ + sqlite-wasm + hashed, gzipped DB -> dist/
 scripts/serve.mjs         local static server
 scripts/make-icons.mjs    renders app/icons/icon.svg to PNGs
-tests/                    pytest suite; tests/js/ node tests (transliteration,
+tests/                    pytest suite; tests/js/ node tests (normaliser,
                           search against the real DB); tests/shared/ cases
                           used by both the Python and JS normalisers
 ```

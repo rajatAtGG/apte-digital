@@ -37,7 +37,7 @@ jobs:
         run: make build
       - name: Parser and normalisation tests
         run: python -m pytest -q tests
-      - name: Transliteration and search tests
+      - name: Normaliser and search tests
         run: npm test
       - name: Assemble the PWA
         run: node scripts/build-app.mjs

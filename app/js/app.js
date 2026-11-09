@@ -8,7 +8,6 @@
 import sqlite3InitModule from '../vendor/sqlite3/index.mjs';
 import { DB_URL, DB_GZ_BYTES, APP_VERSION } from './config.js';
 import { Dictionary, openDatabase, runsText } from './dict.js';
-import { SCHEME_NAMES, schemeLabel, toDevanagari } from './translit.js';
 import { settings, bookmarks, recent } from './store.js';
 import { esc, article, resultRow, highlight } from './render.js';
 
@@ -84,7 +83,6 @@ function applySettings() {
   if (opts.theme === 'system') delete root.dataset.theme;
   else root.dataset.theme = opts.theme;
   root.style.setProperty('--scale', opts.fontScale);
-  $('#scheme').textContent = opts.scheme === 'auto' ? 'Auto' : schemeLabel(opts.scheme).replace('Harvard-Kyoto', 'HK');
 }
 
 function updateSettings(patch) {
@@ -98,7 +96,6 @@ function show(name) {
   for (const v of views) $(`#view-${v}`).hidden = v !== name;
   const tab = name === 'entry' ? null : name === 'about' ? 'settings' : name;
   document.querySelectorAll('.tabbar a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
-  $('#readings').hidden = name !== 'search';
 }
 
 function route() {
@@ -147,7 +144,6 @@ function wireInput() {
     renderSearch();
     input.focus();
   });
-  $('#scheme').addEventListener('click', openSchemeDialog);
   // Remember the query when a result is opened.
   $('#view-search').addEventListener('click', (e) => {
     if (e.target.closest('.list a')) recent.addSearch(state.q, state.mode);
@@ -158,48 +154,42 @@ function setMode(mode, user) {
   state.mode = mode;
   $('#mode').textContent = mode === 'sa' ? 'सं→हि' : 'हि→सं';
   $('#q').placeholder = mode === 'sa'
-    ? 'संस्कृत शब्द · kamala, kṛṣṇa, धर्म'
+    ? 'संस्कृत शब्द खोजें · धर्म, कमल'
     : 'हिन्दी अर्थ से खोजें · प्याला, पानी';
   if (user) $('#q').select?.();
-}
-
-function renderReadings(readings) {
-  const el = $('#readings');
-  const shown = readings.filter((r) => r.scheme !== 'deva');
-  el.innerHTML = shown.map((r) =>
-    `<b>${esc(r.text)}</b> <span class="sch">${esc(r.scheme === 'hk' ? 'HK' : schemeLabel(r.scheme))}</span>`).join('');
 }
 
 function renderSearch() {
   const view = $('#view-search');
   const q = state.q.trim();
   if (!q) {
-    renderReadings([]);
     view.innerHTML = searchHome();
     return;
   }
+  if (!/[\u0900-\u097f]/.test(q)) {
+    view.innerHTML = '<p class="empty">कृपया देवनागरी में टाइप करें।<br><small>Please type in Devanagari.</small></p>';
+    return;
+  }
   if (state.mode === 'hi') {
-    const { words, reading, results, total } = dict.reverse(q, opts.scheme);
-    renderReadings(reading ? [reading] : []);
+    const { words, results, total } = dict.reverse(q);
     if (!results.length) {
       view.innerHTML = `<p class="empty">“${esc(q)}” किसी अर्थ में नहीं मिला।<br><small>No sense contains this word.</small></p>`;
       return;
     }
-    const rows = results.map((r) => resultRow(r, opts,
+    const rows = results.map((r) => resultRow(r,
       r.senses.slice(0, 3).map((s) => `<span class="snip"><span class="n">${esc(s.n ?? '')}</span>${highlight(s.text, words)}</span>`).join('')));
     view.innerHTML = `<p class="note">${total} अर्थों में मिला${total > results.length ? ` · showing ${results.length} entries` : ''}</p><ul class="list">${rows.join('')}</ul>`;
     return;
   }
-  const { readings, results } = dict.search(q, opts.scheme);
-  renderReadings(readings);
+  const results = dict.search(q);
   if (!results.length) {
-    view.innerHTML = `<p class="empty">कोई शब्द नहीं मिला।<br><small>No headword matches. Try another input method, or
-      <a href="#/?${esc(new URLSearchParams({ q, m: 'hi' }))}">search Hindi meanings</a>.</small></p>`;
+    view.innerHTML = `<p class="empty">कोई शब्द नहीं मिला।<br>
+      <a href="#/?${esc(new URLSearchParams({ q, m: 'hi' }))}">हिन्दी अर्थों में खोजें</a></p>`;
     return;
   }
   const fuzzy = results[0].score >= 4; // typo band only (see search.js)
   view.innerHTML = (fuzzy ? '<p class="note">निकटतम शब्द · closest matches</p>' : '')
-    + `<ul class="list">${results.map((r) => resultRow(r, opts)).join('')}</ul>`;
+    + `<ul class="list">${results.map((r) => resultRow(r)).join('')}</ul>`;
 }
 
 function searchHome() {
@@ -217,27 +207,11 @@ function searchHome() {
   }
   h += `<h2 class="section">खोजने के तरीके · How to search</h2>
     <div class="prose small muted">
-      <p>Type in Devanagari or in any romanisation. With <b>Auto</b> every scheme is tried:
-      <code>kṛṣṇa</code> (IAST), <code>kRSNa</code> (Harvard-Kyoto), <code>kRiShNa</code> (ITRANS),
-      <code>kfzRa</code> (SLP1), <code>kqRNa</code> (WX). Plain spellings like <code>krishna</code> also work.</p>
-      <p>Tap <b>सं→हि</b> to switch to <b>हि→सं</b> and find Sanskrit words by their Hindi meaning.</p>
+      <p>देवनागरी में शब्द लिखें। विसर्ग, अनुस्वार या मात्रा का अन्तर हो तो भी शब्द मिल जाता है
+      (राम → रामः, शंकर → शङ्करः), और छोटी वर्तनी-भूलें भी सुधर जाती हैं।</p>
+      <p><b>सं→हि</b> दबाकर <b>हि→सं</b> करें और हिन्दी अर्थ से संस्कृत शब्द खोजें।</p>
     </div>`;
   return h;
-}
-
-function openSchemeDialog() {
-  const dlg = $('#scheme-dialog');
-  const sample = 'कृष्ण';
-  const examples = { iast: 'kṛṣṇa', hk: 'kRSNa', itrans: 'kRiShNa', slp1: 'kfzRa', wx: 'kqRNa' };
-  $('#scheme-options').innerHTML = [['auto', 'Auto', 'tries every scheme; Devanagari always works']]
-    .concat(SCHEME_NAMES.map((s) => [s, schemeLabel(s), `${examples[s]} → ${toDevanagari(examples[s], s) === sample ? sample : ''}`]))
-    .map(([v, label, hint]) => `<label><input type="radio" name="scheme" value="${v}" ${opts.scheme === v ? 'checked' : ''}>
-      <span>${esc(label)} <small>${esc(hint)}</small></span></label>`).join('');
-  dlg.onchange = (e) => {
-    updateSettings({ scheme: e.target.value });
-    if (!$('#view-search').hidden) renderSearch();
-  };
-  dlg.showModal();
 }
 
 // ------------------------------------------------------------------- entry
@@ -326,7 +300,7 @@ function showLetter(letter) {
   const page = () => {
     const rows = dict.browse(letter, offset, 200);
     offset += rows.length;
-    list.insertAdjacentHTML('beforeend', rows.map((r) => resultRow(r, opts)).join(''));
+    list.insertAdjacentHTML('beforeend', rows.map((r) => resultRow(r)).join(''));
     more.hidden = offset >= total;
   };
   more.onclick = page;
@@ -346,7 +320,7 @@ function showSaved() {
   const view = $('#view-saved');
   view.innerHTML = '<h2 class="section">बुकमार्क · Bookmarks</h2>'
     + (marks.length
-      ? `<ul class="list">${marks.map((b) => resultRow(b, opts)).join('')}</ul>`
+      ? `<ul class="list">${marks.map((b) => resultRow(b)).join('')}</ul>`
       : '<p class="empty">No bookmarks yet. Tap ☆ on an entry to save it here.</p>')
     + (seen.length ? `<h2 class="section">हाल में देखे · Recently viewed</h2><div class="chips">${
       seen.map((r) => `<a class="chip" href="#/e/${r.id}">${esc(r.headword)}</a>`).join('')}</div>` : '')
@@ -373,10 +347,6 @@ async function showSettings() {
     <div class="setting"><label class="t" for="font">Text size · <span id="font-val">${Math.round(opts.fontScale * 100)}%</span></label>
       <input id="font" type="range" min="0.85" max="1.6" step="0.05" value="${opts.fontScale}">
       <p class="small" style="margin:6px 0 0"><b>धर्मः</b> <span class="g">पुं०</span> कर्तव्य, नैतिक गुण</p></div>
-    <div class="setting"><label class="t">Input method</label>
-      ${seg('scheme', opts.scheme, [['auto', 'Auto'], ...SCHEME_NAMES.map((s) => [s, s === 'hk' ? 'HK' : schemeLabel(s)])])}</div>
-    <div class="setting switch"><label for="rom">Show IAST under headwords</label>
-      <input id="rom" type="checkbox" ${opts.showRoman ? 'checked' : ''}></div>
     <div class="setting switch"><label for="cats">Show semantic categories (जाति, उपाधि…)</label>
       <input id="cats" type="checkbox" ${opts.showCategories ? 'checked' : ''}></div>
     <div class="setting"><label class="t">Offline</label><span id="offline" class="small muted">Checking…</span></div>
@@ -391,7 +361,6 @@ async function showSettings() {
     updateSettings({ fontScale: Number(e.target.value) });
     $('#font-val').textContent = `${Math.round(opts.fontScale * 100)}%`;
   };
-  $('#rom').onchange = (e) => updateSettings({ showRoman: e.target.checked });
   $('#cats').onchange = (e) => updateSettings({ showCategories: e.target.checked });
   let offline = 'Service workers are unavailable here, so the dictionary needs a connection.';
   if ('caches' in window && navigator.serviceWorker?.controller) {

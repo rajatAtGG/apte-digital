@@ -1,17 +1,12 @@
 // HTML rendering of entries and result rows. Everything that comes from the
 // data goes through esc(); markup is only ever added around it.
 
-import { fromDevanagari } from './translit.js';
-
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 /** The source marks abbreviations with "*" (पुं*); print shows "०" (पुं०).
  *  Applied to every displayed text except headwords, which stay verbatim. */
 export const abbr = (s) => esc(s).replaceAll('*', '०');
-
-/** IAST reading aid for a headword ('*' and punctuation left out). */
-export const roman = (hw) => fromDevanagari(hw.replace(/[*]/g, ''));
 
 const TAG_CLASS = (tag) => `r-${tag.replace(/[^\w]/g, '')}`;
 
@@ -33,10 +28,8 @@ const KIND_LABEL = {
   segmenthd: 'उपशब्द', subsegmenthd: 'उपशब्द', compound: 'समास', sublexhd: 'उपशब्द', compoundverb: 'क्रिया',
 };
 
-function headline(e, opts, big) {
-  const hw = `<span class="hw">${esc(e.headword)}</span>`;
-  const rom = opts.showRoman && e.headword ? `<span class="rom">${esc(roman(e.headword))}</span>` : '';
-  return big ? `<div class="head">${esc(e.headword)}${rom}</div>` : `${hw}${rom}`;
+function headline(e, big) {
+  return big ? `<div class="head">${esc(e.headword)}</div>` : `<span class="hw">${esc(e.headword)}</span>`;
 }
 
 /** Grammar, stems, segmentation and etymology as one line. */
@@ -81,7 +74,7 @@ function subEntry(e, opts, openIds) {
   const open = openIds.has(e.id) ? ' open' : '';
   const kind = KIND_LABEL[e.kind] ? `<span class="kind">${KIND_LABEL[e.kind]}</span>` : '';
   const gram = e.grammar_text ? `<span class="gram">${abbr(e.grammar_text)}</span>` : '';
-  return `<details class="sub" id="e${e.id}"${open}><summary>${headline(e, opts)}${gram}${kind}</summary>
+  return `<details class="sub" id="e${e.id}"${open}><summary>${headline(e)}${gram}${kind}</summary>
     <div class="sub-body">${body(e, opts)}${e.children.map((c) => subEntry(c, opts, openIds)).join('')}</div></details>`;
 }
 
@@ -98,16 +91,16 @@ export function article(e, opts, focusId) {
          <button class="btn small" type="button" data-act="expand">सब खोलें</button></div>
        ${e.children.map((c) => subEntry(c, opts, openIds)).join('')}`
     : '';
-  return `<article class="article">${headline(e, opts, true)}${body(e, opts)}${subs}</article>`;
+  return `<article class="article">${headline(e, true)}${body(e, opts)}${subs}</article>`;
 }
 
 /** One row of a result list. */
-export function resultRow(r, opts, extra = '') {
+export function resultRow(r, extra = '') {
   const under = r.kind && r.kind !== 'main' && r.main_headword
     ? `<span class="under">↳ ${esc(r.main_headword)} के अन्तर्गत</span>` : '';
   const gram = r.grammar ? `<span class="gram">${abbr(r.grammar)}</span>` : '';
   const gloss = r.gloss ? `<span class="gloss">${abbr(r.gloss)}</span>` : '';
-  return `<li><a href="#/e/${r.id}">${under}${headline(r, opts)}${gram}${extra || gloss}</a></li>`;
+  return `<li><a href="#/e/${r.id}">${under}${headline(r)}${gram}${extra || gloss}</a></li>`;
 }
 
 /** Highlight occurrences of (normalised) query words in a sense snippet. */

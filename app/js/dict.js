@@ -3,7 +3,6 @@
 // in the browser and in the Node tests.
 
 import { HeadwordIndex } from './search.js';
-import { readings } from './translit.js';
 import { normalizeWords } from './normalize.js';
 
 const SENSE_STRIDE = 1000; // must match pipeline/build.py
@@ -61,43 +60,31 @@ export class Dictionary {
   }
 
   /**
-   * Headword search. `query` may be Devanagari or any romanisation;
-   * `scheme` is 'auto' or one of the scheme names in translit.js.
-   * Returns { readings, results: [{ ...summary, score, reading }] }.
+   * Headword search for a Devanagari query.
+   * Returns [{ ...summary, score }], best first.
    */
-  search(query, scheme = 'auto', limit = 60) {
-    const rs = readings(query, scheme);
-    const best = new Map();
-    rs.forEach((r, ri) => {
-      for (const [id, hit] of this.index.find(r.text)) {
-        // Small penalty for less likely readings breaks ties between schemes.
-        const score = hit.score + ri * 0.001;
-        const prev = best.get(id);
-        if (!prev || score < prev.score) best.set(id, { score, reading: r });
-      }
-    });
-    // Prefer main entries over sub-entries at equal scores.
-    const ranked = [...best.entries()].sort((a, b) => a[1].score - b[1].score).slice(0, limit * 3);
-    const info = this.summaries(ranked.map(([id]) => id));
-    const results = ranked
+  search(query, limit = 60) {
+    const hits = [...this.index.find(query)].sort((a, b) => a[1].score - b[1].score).slice(0, limit * 3);
+    const info = this.summaries(hits.map(([id]) => id));
+    return hits
       .map(([id, hit]) => ({ ...info.get(id), ...hit }))
+      // Within a score band, main entries before sub-entries, then by
+      // closeness and dictionary order.
       .sort((a, b) => Math.floor(a.score) - Math.floor(b.score)
         || (a.kind !== 'main') - (b.kind !== 'main')
         || a.score - b.score
         || (a.sort_key < b.sort_key ? -1 : 1))
       .slice(0, limit);
-    return { readings: rs, results };
   }
 
   /**
-   * Reverse search: entries whose (Hindi) senses contain all the words of
-   * `query`. Whole-word matches come first, then words that merely start
+   * Reverse search: entries whose Hindi senses contain all the (Devanagari)
+   * words of `query`. Whole-word matches come first, then words that merely start
    * with the query words. Returns [{ ...summary, senses: [index] }].
    */
-  reverse(query, scheme = 'auto', limit = 150) {
-    const r = readings(query, scheme)[0];
-    const words = r ? normalizeWords(r.text) : [];
-    if (!words.length) return { words, reading: r, results: [], total: 0 };
+  reverse(query, limit = 150) {
+    const words = normalizeWords(query);
+    if (!words.length) return { words, results: [], total: 0 };
     const quoted = words.map((w) => `"${w.replaceAll('"', '')}"`);
     const hits = new Map(); // entryId -> sense indices, in rank order
     let total = 0;
@@ -128,7 +115,7 @@ export class Dictionary {
         senses: senses.map((i) => ({ n: all[i]?.n, text: runsText(all[i]?.runs, ['citation']) })),
       };
     });
-    return { words, reading: r, results, total };
+    return { words, results, total };
   }
 
   /** A main entry with all its sub-entries, as a tree. `id` may be the id

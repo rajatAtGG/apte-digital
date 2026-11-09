@@ -94,8 +94,8 @@ export class HeadwordIndex {
     };
     const n = normalize(devanagari);
     if (!n) return found;
-    // A romanised query typed so far ("kamal") ends in a virama (कमल्);
-    // for prefix matching, the bare consonant (कमल) is what is meant.
+    // While typing a conjunct the query briefly ends in a virama (क् on the
+    // way to क्ष); for prefix matching, the bare consonant is what is meant.
     const stem = n.endsWith('्') ? n.slice(0, -1) : n;
 
     for (const q of new Set([n, stem])) {

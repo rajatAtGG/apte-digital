@@ -22,8 +22,6 @@ function write(name, value) {
 export const DEFAULT_SETTINGS = {
   theme: 'system',      // system | light | dark
   fontScale: 1,         // 0.85 … 1.6
-  scheme: 'auto',       // auto | iast | hk | itrans | slp1 | wx
-  showRoman: true,      // IAST reading aid under headwords
   showCategories: true, // जाति / उपाधि … lines in entries
 };
 

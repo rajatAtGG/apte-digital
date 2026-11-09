@@ -1,4 +1,4 @@
-// Transliteration search against the real database (skipped if not built).
+// Devanagari search against the real database (skipped if not built).
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -16,7 +16,7 @@ before(async () => {
   dict = new Dictionary(openDatabase(sqlite3, new Uint8Array(readFileSync(DB))));
 });
 
-const top = (q, scheme = 'auto', n = 5) => dict.search(q, scheme).results.slice(0, n).map((r) => r.headword);
+const top = (q, n = 5) => dict.search(q).slice(0, n).map((r) => r.headword);
 
 test('edit distance', () => {
   assert.equal(editDistance('कमल', 'कमल', 2), 0);
@@ -38,32 +38,35 @@ test('HeadwordIndex bands: exact < prefix < loose < fuzzy', () => {
 
 const opts = { skip: !haveDb && 'build/apte.sqlite not built (run make build)' };
 
-test('the same word in every input method finds कृष्ण', opts, () => {
-  for (const [q, scheme] of [['कृष्ण', 'auto'], ['kṛṣṇa', 'auto'], ['kRSNa', 'hk'],
-    ['kRiShNa', 'itrans'], ['kfzRa', 'slp1'], ['kqRNa', 'wx'], ['kRSNa', 'auto']]) {
-    const hw = top(q, scheme);
-    assert.ok(hw.some((h) => h.startsWith('कृष्ण')), `${q} (${scheme}) -> ${hw}`);
-  }
+test('stems match nominative headwords: कमल -> कमलम्', opts, () => {
+  assert.ok(top('कमल').includes('कमलम्'), top('कमल'));
 });
 
-test('stems match nominative headwords: kamala -> कमलम्', opts, () => {
-  assert.ok(top('kamala').includes('कमलम्'), top('kamala'));
+test('visarga is optional: राम finds राम and रामः', opts, () => {
+  assert.deepEqual(top('राम', 2).sort(), ['राम', 'रामः'].sort());
+  assert.ok(top('रामः').includes('राम'));
 });
 
-test('visarga and case endings are optional: rAmaH and rAma', opts, () => {
-  assert.deepEqual(top('rAmaH', 'hk', 2).sort(), ['राम', 'रामः'].sort());
-  assert.ok(top('राम').includes('रामः'));
+test('anusvara and nasal-cluster spellings meet: शंकर / शङ्कर', opts, () => {
+  assert.ok(top('शंकर').some((h) => h.startsWith('शङ्कर') || h.startsWith('शंकर')), top('शंकर'));
 });
 
-test('prefix match while typing', opts, () => {
-  const hw = dict.search('kamal', 'hk', 200).results.map((r) => r.headword);
-  assert.ok(hw.includes('कमलाकरः') || hw.includes('कमला'), hw.slice(0, 10));
+test('prefix match while typing, including a half-typed conjunct', opts, () => {
+  const hw = dict.search('कमला', 200).map((r) => r.headword);
+  assert.ok(hw.includes('कमलाकरः'), hw.slice(0, 10));
+  // क्  (on the way to क्ष) still lists words beginning with क.
+  assert.ok(dict.search('क्').length > 0);
 });
 
-test('typo tolerance: plain-English spellings', opts, () => {
-  assert.ok(top('krishna').some((h) => h.startsWith('कृष्ण')), top('krishna'));
-  assert.ok(top('shiva').some((h) => h.startsWith('शिव')), top('shiva'));
-  assert.ok(top('samskrta').some((h) => h.startsWith('संस्कृत')), top('samskrta'));
+test('typo tolerance in Devanagari', opts, () => {
+  assert.ok(top('क्रिश्न').some((h) => h.startsWith('कृष्ण')), top('क्रिश्न'));  // ri for ṛ, श for ष
+  assert.ok(top('दर्म').some((h) => h.startsWith('धर्म')), top('दर्म'));         // missing aspiration
+  assert.ok(top('संसकृत').some((h) => h.startsWith('संस्कृत')), top('संसकृत'));   // missing virama
+});
+
+test('non-matching input returns nothing rather than throwing', opts, () => {
+  assert.deepEqual(dict.search('kamala'), []);
+  assert.deepEqual(dict.search(''), []);
 });
 
 test('star headwords are found without the star', opts, () => {
@@ -71,7 +74,7 @@ test('star headwords are found without the star', opts, () => {
 });
 
 test('homonyms are both returned', opts, () => {
-  assert.equal(top('कंसः', 'auto', 10).filter((h) => h === 'कंसः').length >= 2, true);
+  assert.ok(top('कंसः', 10).filter((h) => h === 'कंसः').length >= 2);
 });
 
 test('reverse search: Hindi word -> Sanskrit headwords', opts, () => {
@@ -79,12 +82,12 @@ test('reverse search: Hindi word -> Sanskrit headwords', opts, () => {
   const hw = results.map((r) => r.headword);
   assert.ok(hw.includes('चषकः') && hw.includes('कंसः'), hw);
   assert.ok(results[0].senses[0].text.includes('प्याला'));
-  // Romanised Hindi works too (HK reading of "pyAlA").
-  assert.ok(dict.reverse('pyAlA', 'hk').results.length > 0);
+  // Candrabindu/anusvara variants meet: काँसा finds senses written कांसा too.
+  assert.ok(dict.reverse('काँसा').results.length > 0);
 });
 
 test('entry tree and neighbours', opts, () => {
-  const id = dict.search('अंश्').results.find((r) => r.headword === 'अंश्').id;
+  const id = dict.search('अंश्').find((r) => r.headword === 'अंश्').id;
   const e = dict.entry(id);
   assert.equal(e.kind, 'main');
   assert.equal(e.children[0].headword, 'व्यंश्');
@@ -103,6 +106,6 @@ test('browse is in varnamala order', opts, () => {
 
 test('search is fast enough to run per keystroke', opts, () => {
   const t = performance.now();
-  for (const q of ['k', 'ka', 'kam', 'kama', 'kamal', 'krishna', 'xyzq']) dict.search(q);
+  for (const q of ['क', 'कम', 'कमल', 'कमला', 'क्रिश्न', 'ज़ज़ज़ज़']) dict.search(q);
   assert.ok(performance.now() - t < 1500, `${performance.now() - t} ms`);
 });
