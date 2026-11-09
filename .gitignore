@@ -1,0 +1,8 @@
+# Source data is fetched by scripts/fetch_data.sh; build outputs are reproducible.
+data/raw/
+build/
+node_modules/
+__pycache__/
+.pytest_cache/
+app/vendor/
+app/data/

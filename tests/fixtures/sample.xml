@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dict SYSTEM "apte.dtd">
+<!-- Hand-made fixture reproducing the quirks of the real Apte data. -->
+<dict>
+<lexhead no="1">
+<dentry>*द</dentry>
+<prAwipaxikam>द</prAwipaxikam>
+<grammar>वि*</grammar>
+<sense no="1">देने वाला</sense>
+</lexhead>
+
+<lexhead no="2">
+<dentry>कंसः</dentry>
+<prAwipaxikam gen="puM">कंस</prAwipaxikam>
+<grammar>पुं*</grammar>
+<etymology>[कंस्-अ]</etymology>
+<is_a_part>पाकस्थानम्</is_a_part>
+<kind_of>पात्रम्</kind_of>
+<upAXi>गार्हिकोपकरणम्</upAXi>
+<sense no="1">जल पीने का पात्र, प्याला</sense>
+<sense n="2">काँसा</sense>
+</lexhead>
+
+<lexhead no="2a">
+<dentry>कंसः</dentry>
+<prAwipaxikam>कंस</prAwipaxikam>
+<grammar></grammar>?
+<jAwi>राक्षसः</jAwi>
+<sense no="1">मथुरा का राजा<citation>भाग* १०।१<citation>विष्णु*</citation></citation></sense>
+</lexhead>
+
+<lexhead no="3">
+<dentry>अंश्</dentry>
+<prAwipaxikam>अंश्</prAwipaxikam>
+<grammar><gaNa>चुरा*</gaNa><paxI>उभ*</paxI><vform>अंशयति,अंशते</vform></grammar>
+<etymology>[अंश+ला+क] <vigrahavAkyam>अंशं लाति इति</vigrahavAkyam></etymology>
+<sense no="1">बांटना</sense>
+<segmenthd>
+<dentry>व्यंश्</dentry>
+<prAwipaxikam>व्यंश्</prAwipaxikam>
+<seg>वि-अंश्</seg>
+<grammar><gaNa>चुरा*</gaNa><paxI>उभ*</paxI></grammar>
+<sense no="1">धोखा देना</sense>
+<subsegmenthd>
+<dentry>अग्निकुमारः</dentry>
+<prAwipaxikam>अग्निकुमार</prAwipaxikam>
+<seg>अग्निः-कुमारः</seg>
+<grammar>पुं*</grammar>
+<sense no="1">स्कन्द</sense>
+</subsegmenthd>
+</segmenthd>
+<compound>
+<prAwipaxikam>मध्येगङ्गम्</prAwipaxikam>
+मध्येगङ्गम्
+<grammar>अव्य*</grammar>
+<sense no="1">गंगा के बीच में</sense></compound>
+<sublexhd><grammar>वि*</grammar><sense no="1">उप-अर्थ</sense></sublexhd>
+</lexhead>
+</dict>
