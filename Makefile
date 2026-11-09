@@ -1,6 +1,6 @@
-.PHONY: all data build test clean
+.PHONY: all data build app serve test clean
 
-all: build
+all: app
 
 data:            ## sparse-checkout the Apte XML from samsaadhanii/scl (pinned commit)
 	./scripts/fetch_data.sh
@@ -8,8 +8,16 @@ data:            ## sparse-checkout the Apte XML from samsaadhanii/scl (pinned c
 build: data      ## parse XML -> build/apte.sqlite, build/apte.json, build/report.txt
 	python3 pipeline/build.py
 
-test:            ## parser + normalisation tests (the full-build test needs `make data`)
+app: build       ## assemble the PWA in dist/
+	npm install --no-audit --no-fund
+	node scripts/build-app.mjs
+
+serve:           ## serve dist/ on http://localhost:8080/
+	node scripts/serve.mjs dist 8080
+
+test:            ## all tests (data-dependent ones are skipped until `make build`)
 	python3 -m pytest -q tests
+	npm test
 
 clean:
-	rm -rf build
+	rm -rf build dist

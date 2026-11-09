@@ -1,0 +1,14 @@
+{
+  "name": "apte-digital",
+  "private": true,
+  "type": "module",
+  "description": "Offline Sanskrit-Hindi dictionary (V. S. Apte) as an installable PWA",
+  "scripts": {
+    "test": "node --test tests/js/*.test.mjs",
+    "build:app": "node scripts/build-app.mjs",
+    "serve": "node scripts/serve.mjs dist"
+  },
+  "devDependencies": {
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1"
+  }
+}

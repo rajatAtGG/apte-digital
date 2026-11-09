@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#7a2e1d"/>
+  <rect x="56" y="56" width="400" height="400" rx="72" fill="none" stroke="#f3e3c3" stroke-opacity="0.35" stroke-width="6"/>
+  <text x="256" y="335" text-anchor="middle" font-family="Noto Serif Devanagari, serif" font-weight="700"
+        font-size="250" fill="#fbf3e2">आ</text>
+</svg>

@@ -1,0 +1,59 @@
+# Build the dictionary from source, run all tests, and deploy the PWA to
+# GitHub Pages. The data build fails (and nothing is deployed) if the parsed
+# counts differ from pipeline/expected.json.
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, ccr-dbe3132c-3k23ps]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install test and build tools
+        run: |
+          python -m pip install pytest
+          npm ci
+      - name: Fetch source data and build the database (validates counts)
+        run: make build
+      - name: Parser and normalisation tests
+        run: python -m pytest -q tests
+      - name: Transliteration and search tests
+        run: npm test
+      - name: Assemble the PWA
+        run: node scripts/build-app.mjs
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
