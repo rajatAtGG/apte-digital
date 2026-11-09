@@ -43,12 +43,26 @@ def main():
             continue
         lines, (w, _h) = read_page(tsv)
         im = Image.open(os.path.join(args.ocr_dir, f"p-{page:04d}.png"))
+        # The gutter: just left of where right-column lines start. Tesseract
+        # sometimes merges a left and a right line into one box spanning both
+        # columns (seen on the first page, under the letter heading); such a
+        # line belongs to both columns, and every strip is cropped to its own
+        # column, so a strip never shows text from the other column.
+        right_starts = [l["box"][0] for l in lines if l["box"][0] >= w * 0.45]
+        gutter = (min(right_starts) - 15) if right_starts else w // 2
         for col, name in ((0, "L"), (1, "R")):
-            ls = sorted((l for l in lines if (l["box"][0] >= w * 0.45) == bool(col)), key=lambda l: l["box"][1])
+            if col == 0:
+                ls = [l for l in lines if l["box"][0] < gutter]
+            else:
+                ls = [l for l in lines if l["box"][2] > gutter + 40]
+            ls.sort(key=lambda l: l["box"][1])
             if not ls:
                 continue
-            x0 = max(min(l["box"][0] for l in ls) - 20, 0)
-            x1 = min(max(l["box"][2] for l in ls) + 20, im.width)
+            if col == 0:
+                x0, x1 = max(min(l["box"][0] for l in ls) - 20, 0), gutter
+            else:
+                x0 = gutter
+                x1 = min(max(l["box"][2] for l in ls) + 20, im.width)
             for k in range(0, len(ls), LINES_PER_STRIP):
                 group = ls[k:k + LINES_PER_STRIP]
                 y0 = max(group[0]["box"][1] - 14, 0)

@@ -227,6 +227,16 @@ def tokens(text):
     return [w for w in t.split() if DEVA.search(w) or w.isdigit()]
 
 
+def cmp_key(word):
+    """Form used when diffing words: the search normalisation (visarga, joiners,
+    nasal clusters) plus two conventions the print and the digital text write
+    differently without meaning anything: a word-final anusvara for -म्
+    (अजीकवं = अजीकवम्) and a word-final virama (ल्युट = ल्युट्)."""
+    k = normalize(word)
+    k = k[:-1] if k.endswith("\u094d") else k
+    return k[:-1] + "म" if k.endswith("\u0902") else k
+
+
 def ocr_key(text):
     """Headword key that also forgives Tesseract's commonest slips: dropped
     anusvara/candrabindu, nukta and a lost virama (joiners are already
@@ -321,7 +331,8 @@ def compare_entry(e, mains, vocab, window_keys=frozenset()):
             for t in tokens(text):
                 p_tok.append(t)
                 p_meta.append((conf, li))
-    sm = difflib.SequenceMatcher(None, p_tok, d_tok, autojunk=False)
+    # Diff on comparison keys; report the original spellings.
+    sm = difflib.SequenceMatcher(None, [cmp_key(t) for t in p_tok], [cmp_key(t) for t in d_tok], autojunk=False)
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "equal":
             continue
@@ -347,7 +358,11 @@ def compare_entry(e, mains, vocab, window_keys=frozenset()):
             # real word elsewhere in the dictionary while the digital one is
             # rare: the strongest single-word evidence we can get.
             ocr_rule = mean >= 90 and vocab[a] >= 2 and vocab[b] <= 2
-            if 0.6 <= r < 1 and len(a) >= 3 and normalize(a) != normalize(b) and (TEXT_MODE or ocr_rule):
+            # Print abbreviates compounds under the main word (-धूर्तिलः under
+            # अक्ष); the digital text spells them out (अक्षधूर्तिलः).
+            compound = len(b) > len(a) + 1 and cmp_key(b).endswith(cmp_key(a).lstrip("-"))
+            if 0.6 <= r < 1 and len(a) >= 2 and cmp_key(a) != cmp_key(b) and not compound \
+                    and (TEXT_MODE or ocr_rule):
                 findings.append(("spelling", pw, dw, mean, lines, ctx_d))
     g_print = e.get("grammar")
     g_dig = mains[e["match"][0]]["grammar"] or ""
@@ -415,6 +430,7 @@ def main():
     if args.text:
         TEXT_MODE = True
         override = json.load(open(args.override, encoding="utf-8")) if args.override else {}
+        args.reread = set(override)
         pages = load_text_pages(args.strips, args.text, args.first_page, override)
     else:
         pages = []
@@ -472,8 +488,11 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     findings.sort(key=lambda f: (f["entry"]["page"], ORDER.index(f["type"])))
     rows = []
+    reread = getattr(args, "reread", set())
     for i, f in enumerate(findings, 1):
         e = f["entry"]
+        srcs = [e["lines"][j].get("src") for j in f["lines"] if j < len(e["lines"])]
+        f["verified"] = bool(srcs) and all(x in reread for x in srcs)
         mid = f.get("digital_id") or (mains[e["match"][0]]["id"] if e["match"] else "")
         f["fid"] = f"{args.batch}-{i:04d}"
         f["digital_id"] = mid
@@ -482,7 +501,8 @@ def main():
             "printed_headword": " ".join(e["heads"]),
             "digital_headword": mains[e["match"][0]]["headword"] if e["match"] else "",
             "digital_entry_id": mid, "printed": f["printed"], "digital": f["digital"],
-            "ocr_confidence": f["conf"] if f["conf"] is not None else "", "status": "", "note": "",
+            "ocr_confidence": "" if TEXT_MODE or f["conf"] is None else f["conf"],
+            "verified_by_reread": "yes" if f["verified"] else "", "status": "", "note": "",
         })
     with open(os.path.join(args.out, f"{args.batch}-findings.csv"), "w", encoding="utf-8-sig", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()) if rows else ["id"])
@@ -535,9 +555,10 @@ def write_html(args, findings, summary, mains):
   <header><b>{esc(f['fid'])}</b> · PDF p.{e['page']} · <span class="tag">{esc(LABEL[f['type']])}</span>
   · <span class="hw">{esc(' / '.join(e['heads']))}</span>
   {f'· <a href="{esc(link)}" target="_blank" rel="noopener">digital entry</a>' if link else ''}
-  {f'· OCR conf {f["conf"]}' if f.get('conf') is not None else ''}</header>
+  {f'· OCR conf {f["conf"]}' if f.get('conf') is not None and not TEXT_MODE else ''}
+  {'· <b class="ok">verified by Opus re-read</b>' if f.get('verified') else ''}</header>
   <div class="scan">{imgs}</div>
-  <dl><dt>Print (OCR)</dt><dd>{esc(f['printed']) or '—'}</dd>
+  <dl><dt>Print</dt><dd>{esc(f['printed']) or '—'}</dd>
       <dt>Digital</dt><dd>{esc(f['digital']) or '—'}</dd>
       {f"<dt>Digital context</dt><dd class='ctx'>{esc(f.get('context',''))}</dd>" if f.get('context') else ''}</dl>
 </article>""")
@@ -559,7 +580,7 @@ article{{background:var(--card);border:1px solid var(--line);border-radius:10px;
 article header{{font-size:.85em;color:var(--muted)}} .hw{{color:var(--ink);font-weight:700;font-size:1.1em}}
 .tag{{color:var(--accent);font-weight:600}} .scan img{{max-width:100%;display:block;margin:8px 0;border:1px solid var(--line);background:#fff}}
 dl{{display:grid;grid-template-columns:8em 1fr;gap:2px 10px;margin:4px 0 0}} dt{{color:var(--muted);font-size:.85em}} dd{{margin:0}}
-.ctx{{color:var(--muted);font-size:.9em}} a{{color:var(--accent)}}
+.ctx{{color:var(--muted);font-size:.9em}} a{{color:var(--accent)}} .ok{{color:#2e7d32}}
 </style></head><body><main>
 <h1>Printed Apte vs Samsaadhanii · {esc(args.batch)}</h1>
 <p class="sum">PDF pages {esc(s['pages'])} · {s['printed_entries']} printed entries found by OCR, {s['aligned']} aligned with
