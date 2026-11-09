@@ -320,10 +320,28 @@ def align(entries, mains, start, end, threshold=0.88):
 
 # -------------------------------------------------------------- comparison
 
+def likely_wrong(printed, digital, vocab):
+    """Which side of a spelling difference is probably the error, judged by
+    how often each spelling occurs elsewhere in the digital dictionary: a
+    form found nowhere else, when the other is common, is probably a typo.
+    Either side can be wrong: the print has its own misprints."""
+    p, d = vocab[printed], vocab[digital] - 1  # minus this occurrence
+    if p >= 2 and d == 0:
+        return "digital"
+    if d >= 2 and p == 0:
+        return "print"
+    return ""
+
+
 def compare_entry(e, mains, vocab, window_keys=frozenset()):
     findings = []
     digital_text = " ".join(mains[k]["text"] for k in e["match"])
     d_tok = tokens(digital_text)
+    # Words of the neighbouring digital entries: print runs derived forms
+    # (-मः, -नं) and compounds inline, the digital text often stores them as
+    # separate entries next to this one.
+    lo, hi = max(e["match"][0] - 15, 0), min(e["match"][-1] + 16, len(mains))
+    near_keys = {cmp_key(t) for k in range(lo, hi) for t in tokens(mains[k]["text"])}
     # Printed tokens keep their OCR confidence and box for evidence.
     p_tok, p_meta = [], []
     for li, ln in enumerate(e["lines"]):
@@ -346,8 +364,14 @@ def compare_entry(e, mains, vocab, window_keys=frozenset()):
         # A run that starts with a headword the digital text has elsewhere is
         # a following entry whose start OCR missed, not a missing passage.
         starts_entry = any(ocr_key(w) in window_keys for w in pw[:3] if len(w) > 2)
+        # A printed word counts as present nearby if a neighbouring digital
+        # word is it, or ends with it (compound parts: -जः for अत्रिजः).
+        def nearby(w):
+            k = cmp_key(w)
+            return k in near_keys or (len(k) >= 2 and any(t.endswith(k) for t in near_keys))
+        elsewhere = sum(nearby(w) for w in pw) / max(len(pw), 1) >= 0.8
         if op in ("insert", "replace") and len(pw) >= 4 and len(dw) <= len(pw) // 3 and mean >= 80 \
-                and known >= 0.7 and not starts_entry:
+                and known >= 0.7 and not starts_entry and not elsewhere:
             findings.append(("missing_in_digital", pw, dw, mean, lines, ctx_d))
         elif op in ("delete", "replace") and len(dw) >= 4 and len(pw) <= len(dw) // 4:
             findings.append(("missing_in_print", pw, dw, mean, lines, ctx_d))
@@ -411,6 +435,15 @@ PRECISION = {
     "entry_missing_in_print": "mostly OCR missing the entry start",
 }
 HIDDEN = {"missing_in_print", "entry_missing_in_print"}
+# Same, measured for the Sonnet-transcription + Opus-re-read pipeline (batch 1).
+PRECISION_TEXT = {
+    "missing_in_digital": "~60% real; the rest are compounds stored elsewhere",
+    "missing_in_print": "not reviewed; mostly compounds spelled out in the digital text",
+    "spelling": "print text verified 12/12; about half are digital typos, half print misprints",
+    "grammar": "real differences; the print itself is often the one in error",
+    "entry_missing_in_digital": "10/10 sampled were real",
+    "entry_missing_in_print": "not reviewed; mostly entries the print gives inline",
+}
 
 
 def main():
@@ -483,7 +516,8 @@ def main():
                                  digital=mains[k]["headword"], digital_id=mains[k]["id"], conf=None, lines=[0]))
         for typ, pw, dw, conf, lines, ctx in compare_entry(e, mains, vocab, window_keys):
             findings.append(dict(type=typ, entry=e, printed=" ".join(pw), digital=" ".join(dw),
-                                 context=ctx, conf=round(conf), lines=lines))
+                                 context=ctx, conf=round(conf), lines=lines,
+                                 hint=likely_wrong(pw[0], dw[0], vocab) if typ == "spelling" else ""))
 
     os.makedirs(args.out, exist_ok=True)
     findings.sort(key=lambda f: (f["entry"]["page"], ORDER.index(f["type"])))
@@ -502,7 +536,8 @@ def main():
             "digital_headword": mains[e["match"][0]]["headword"] if e["match"] else "",
             "digital_entry_id": mid, "printed": f["printed"], "digital": f["digital"],
             "ocr_confidence": "" if TEXT_MODE or f["conf"] is None else f["conf"],
-            "verified_by_reread": "yes" if f["verified"] else "", "status": "", "note": "",
+            "verified_by_reread": "yes" if f["verified"] else "",
+            "likely_error_in": f.get("hint", ""), "status": "", "note": "",
         })
     with open(os.path.join(args.out, f"{args.batch}-findings.csv"), "w", encoding="utf-8-sig", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()) if rows else ["id"])
@@ -556,7 +591,8 @@ def write_html(args, findings, summary, mains):
   · <span class="hw">{esc(' / '.join(e['heads']))}</span>
   {f'· <a href="{esc(link)}" target="_blank" rel="noopener">digital entry</a>' if link else ''}
   {f'· OCR conf {f["conf"]}' if f.get('conf') is not None and not TEXT_MODE else ''}
-  {'· <b class="ok">verified by Opus re-read</b>' if f.get('verified') else ''}</header>
+  {'· <b class="ok">verified by Opus re-read</b>' if f.get('verified') else ''}
+  {f'· likely error in <b>{f["hint"]}</b>' if f.get('hint') else ''}</header>
   <div class="scan">{imgs}</div>
   <dl><dt>Print</dt><dd>{esc(f['printed']) or '—'}</dd>
       <dt>Digital</dt><dd>{esc(f['digital']) or '—'}</dd>
@@ -564,7 +600,7 @@ def write_html(args, findings, summary, mains):
 </article>""")
     s = summary
     counts = "".join(f'<label><input type="checkbox" {"" if k in HIDDEN else "checked"} value="{k}"> '
-                     f'{esc(LABEL[k])} <b>{v}</b> <small>({esc(PRECISION[k])})</small></label>'
+                     f'{esc(LABEL[k])} <b>{v}</b> <small>({esc((PRECISION_TEXT if TEXT_MODE else PRECISION)[k])})</small></label>'
                      for k, v in s["findings"].items())
     doc = f"""<!doctype html><html lang="hi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -583,9 +619,10 @@ dl{{display:grid;grid-template-columns:8em 1fr;gap:2px 10px;margin:4px 0 0}} dt{
 .ctx{{color:var(--muted);font-size:.9em}} a{{color:var(--accent)}} .ok{{color:#2e7d32}}
 </style></head><body><main>
 <h1>Printed Apte vs Samsaadhanii · {esc(args.batch)}</h1>
-<p class="sum">PDF pages {esc(s['pages'])} · {s['printed_entries']} printed entries found by OCR, {s['aligned']} aligned with
+<p class="sum">PDF pages {esc(s['pages'])} · {s['printed_entries']} printed entries found, {s['aligned']} aligned with
 digital entries ({esc(s['digital_range'][0])} … {esc(s['digital_range'][1])}, {s['digital_entries_in_range']} digital main entries).
-Every item is a candidate: OCR can misread, so compare against the scan crop before accepting it.</p>
+{"Print text: Sonnet 5.5 transcription; every line behind a finding re-read by Opus 5.5." if TEXT_MODE else "Print text: Tesseract OCR."}
+Every item is a candidate difference: check the scan crop, and remember either side can be the one in error.</p>
 <div class="filters">{counts}</div>
 {''.join(cards) or '<p>No findings.</p>'}
 </main><script>

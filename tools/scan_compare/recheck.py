@@ -56,8 +56,10 @@ def collect(args):
     keys = json.load(open(os.path.join(args.dir, "keys.json")))
     override, missing = {}, []
     for key in keys:
-        path = os.path.join(args.dir, safe(key) + ".txt")
-        if not os.path.exists(path):
+        # Accept NAME.txt and NAME.png.txt (both readings of "same name").
+        path = next((p for p in (os.path.join(args.dir, safe(key) + ext) for ext in (".txt", ".png.txt"))
+                     if os.path.exists(p)), None)
+        if path is None:
             missing.append(key)
             continue
         text = " ".join(l.strip() for l in open(path, encoding="utf-8") if l.strip())
