@@ -67,6 +67,8 @@ ENTRY_START = re.compile(
     r"[\(\[{]\s*" + GRAMMAR + r"[\s.)०॰,]")
 GRAMMAR_KEY = {"पु": "पुं", "पुं": "पुं", "नपु": "नपुं", "नपुं": "नपुं", "वि": "वि",
                "स्त्री": "स्त्री", "अव्य": "अव्य"}
+TEXT_MODE = False  # True when reading LLM transcriptions instead of OCR
+
 DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
 
@@ -102,6 +104,41 @@ def read_page(tsv_path):
             continue  # running header: guide words and page number
         out.append({"text": text, "words": words, "box": (x0, y0, x1, y1)})
     return out, (page_w, page_h)
+
+
+def load_text_pages(strip_dir, text_dir, first_page=1, override=None):
+    """Pages built from transcribed strips (see make_strips.py) instead of
+    Tesseract: each strip's text file is read line by line and each line is
+    given the OCR box of the corresponding printed line (for the indent test
+    and for scan crops). `override` maps "STRIP#LINE" to a replacement text
+    (the Opus re-read of that line). Lines carry "src" = "STRIP#LINE"."""
+    override = override or {}
+    manifest = json.load(open(os.path.join(strip_dir, "manifest.json"), encoding="utf-8"))
+    by_page = collections.OrderedDict()
+    for s in manifest:
+        if s["page"] >= first_page:
+            by_page.setdefault(s["page"], []).append(s)
+    pages = []
+    for page, strips in by_page.items():
+        lines = []
+        for s in strips:  # manifest order: left column top-down, then right
+            path = os.path.join(text_dir, s["id"] + ".txt")
+            if not os.path.exists(path):
+                print(f"warning: missing transcription {path}", file=sys.stderr)
+                continue
+            texts = [t.strip() for t in open(path, encoding="utf-8") if t.strip()]
+            boxes, n, m = s["lines"], len(texts), len(s["lines"])
+            for i, t in enumerate(texts):
+                # Same line count as OCR (the normal case): use its box;
+                # otherwise the proportionally nearest one.
+                box = boxes[i] if n == m else boxes[min(m - 1, round(i * (m - 1) / max(n - 1, 1)))]
+                key = f"{s['id']}#{i}"
+                t = override.get(key, t)
+                words = [(w, 99.0, tuple(box)) for w in t.split()]
+                lines.append({"text": t, "words": words, "box": tuple(box), "src": key})
+        # ocr_pages.sh scales every page to 2480 px wide (A4 at 300 dpi).
+        pages.append((page, lines, (2480, 3508)))
+    return pages
 
 
 def at_column_edge(lines, page_w, window=4, indent=0.009):
@@ -309,8 +346,8 @@ def compare_entry(e, mains, vocab, window_keys=frozenset()):
             # Close spellings, confident OCR, and the printed spelling is a
             # real word elsewhere in the dictionary while the digital one is
             # rare: the strongest single-word evidence we can get.
-            if 0.6 <= r < 1 and mean >= 90 and len(a) >= 3 and vocab[a] >= 2 and vocab[b] <= 2 \
-                    and normalize(a) != normalize(b):
+            ocr_rule = mean >= 90 and vocab[a] >= 2 and vocab[b] <= 2
+            if 0.6 <= r < 1 and len(a) >= 3 and normalize(a) != normalize(b) and (TEXT_MODE or ocr_rule):
                 findings.append(("spelling", pw, dw, mean, lines, ctx_d))
     g_print = e.get("grammar")
     g_dig = mains[e["match"][0]]["grammar"] or ""
@@ -369,15 +406,24 @@ def main():
     ap.add_argument("--first-page", type=int, default=1, help="first PDF page with dictionary entries")
     ap.add_argument("--db", default=os.path.join(ROOT, "build", "apte.sqlite"))
     ap.add_argument("--app-url", default="https://rajatatgg.github.io/apte-digital/")
+    ap.add_argument("--text", help="directory of strip transcriptions (instead of OCR text)")
+    ap.add_argument("--strips", help="strip directory with manifest.json (with --text)")
+    ap.add_argument("--override", help="JSON {\"STRIP#LINE\": text} of re-read lines (with --text)")
     args = ap.parse_args()
 
-    pages = []
-    for tsv in sorted(glob.glob(os.path.join(args.ocr_dir, "p-*.tsv"))):
-        n = int(re.search(r"p-(\d+)\.tsv", tsv).group(1))
-        if n < args.first_page:
-            continue
-        lines, size = read_page(tsv)
-        pages.append((n, lines, size))
+    global TEXT_MODE
+    if args.text:
+        TEXT_MODE = True
+        override = json.load(open(args.override, encoding="utf-8")) if args.override else {}
+        pages = load_text_pages(args.strips, args.text, args.first_page, override)
+    else:
+        pages = []
+        for tsv in sorted(glob.glob(os.path.join(args.ocr_dir, "p-*.tsv"))):
+            n = int(re.search(r"p-(\d+)\.tsv", tsv).group(1))
+            if n < args.first_page:
+                continue
+            lines, size = read_page(tsv)
+            pages.append((n, lines, size))
     entries = segment_entries(pages)
     mains = load_corpus(args.db)
     vocab = collections.Counter(t for m in mains for t in tokens(m["text"]))
@@ -459,6 +505,13 @@ def main():
          "text": e["text"][:300]} for e in entries]},
         open(os.path.join(args.out, f"{args.batch}-entries.json"), "w", encoding="utf-8"),
         ensure_ascii=False, indent=1)
+    json.dump([{"id": f["fid"], "type": f["type"], "page": f["entry"]["page"],
+                "printed_headword": " ".join(f["entry"]["heads"]), "printed": f["printed"], "digital": f["digital"],
+                "lines": [{"src": ln.get("src"), "page": ln["page"], "box": ln["box"], "text": ln["text"]}
+                          for ln in (f["entry"]["lines"][i] for i in f["lines"] if i < len(f["entry"]["lines"]))]}
+               for f in findings],
+              open(os.path.join(args.out, f"{args.batch}-findings.json"), "w", encoding="utf-8"),
+              ensure_ascii=False, indent=1)
     write_html(args, findings, summary, mains)
     print(json.dumps(summary, ensure_ascii=False, indent=1))
 
