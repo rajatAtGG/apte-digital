@@ -8,12 +8,14 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { join, relative } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
+// Usage: node scripts/build-app.mjs [--db path/to/apte.sqlite] [--out dist]
 const ROOT = new URL('..', import.meta.url).pathname;
-const DIST = join(ROOT, 'dist');
-const DB = join(ROOT, 'build', 'apte.sqlite');
+const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : dflt; };
+const DIST = arg('--out', join(ROOT, 'dist'));
+const DB = arg('--db', join(ROOT, 'build', 'apte.sqlite'));
 const SQLITE = join(ROOT, 'node_modules', '@sqlite.org', 'sqlite-wasm', 'dist');
 
-if (!existsSync(DB)) throw new Error('build/apte.sqlite is missing: run `make build` first');
+if (!existsSync(DB)) throw new Error(`${DB} is missing: run \`make build\` (or pipeline/build_print.py) first`);
 if (!existsSync(SQLITE)) throw new Error('sqlite-wasm is missing: run `npm install` first');
 
 rmSync(DIST, { recursive: true, force: true });

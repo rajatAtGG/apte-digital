@@ -135,6 +135,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .senses { list-style: none; margin: 0; padding: 0; }
 .senses li { display: grid; grid-template-columns: 1.8em 1fr; margin: 0 0 6px; }
 .senses .n { color: var(--accent); font-weight: 700; }
+.senses li.plain { display: block; }
 cite, .r-citation { font-style: normal; color: var(--cite); font-size: 0.88em; }
 cite::before { content: '—'; margin: 0 3px 0 4px; }
 .r-vform { font-style: italic; }
@@ -161,6 +162,7 @@ details.sub > .sub-body { padding: 0 0 10px 22px; }
 details.sub details.sub { margin-left: 4px; }
 details.sub.flash > summary { animation: flash 1.6s ease-out; }
 @keyframes flash { from { background: var(--mark); } to { background: transparent; } }
+.full { color: var(--muted); font-size: 0.85em; margin-left: 6px; }
 .kind { font-size: 0.7em; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
   color: var(--muted); margin-left: 6px; vertical-align: 2px; }
 .pager { display: flex; justify-content: space-between; gap: 8px; margin: 16px 0; }

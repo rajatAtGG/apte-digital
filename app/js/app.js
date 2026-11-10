@@ -1,9 +1,10 @@
 // App controller: loads the database, routes between views, wires up input.
 //
-// Routes (hash-based, so the app works from any sub-path such as GitHub Pages):
-//   #/?q=…&m=sa|hi   search (Sanskrit headwords, or Hindi reverse search)
-//   #/e/<id>          an entry (a sub-entry id opens its main entry at it)
-//   #/browse[/<letter>], #/saved, #/settings, #/about
+// Routes are plain hash names (works on any sub-path, and inside a Claude
+// artifact, which passes only "#name" fragments):
+//   #search            search (the query lives in the page, not the hash)
+//   #e-<id>            an entry (a sub-entry id opens its main entry at it)
+//   #browse, #browse-<n> (n = index in the letter list), #saved, #options, #about
 
 import sqlite3InitModule from '../vendor/sqlite3/index.mjs';
 import { DB_URL, DB_GZ_BYTES, APP_VERSION } from './config.js';
@@ -35,6 +36,12 @@ async function fetchDatabase(onProgress) {
     onProgress(Math.min(loaded / total, 1));
   }
   let bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+  // Hosts that serve no binary archives (a Claude artifact) get the gzipped
+  // database as base64 text ("….b64.txt").
+  if (DB_URL.endsWith('.b64.txt')) {
+    const text = new TextDecoder().decode(bytes).replace(/\s+/g, '');
+    bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+  }
   // Decompress unless the server already did (gzip magic number 1f 8b).
   if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
     if (typeof DecompressionStream === 'undefined') {
@@ -78,10 +85,13 @@ async function boot() {
 
 // ---------------------------------------------------------------- settings
 
+let themeSetByApp = false;
 function applySettings() {
   const root = document.documentElement;
-  if (opts.theme === 'system') delete root.dataset.theme;
-  else root.dataset.theme = opts.theme;
+  // "System" leaves the attribute alone: a host page (such as the Claude
+  // artifact viewer) may set its own theme there.
+  if (opts.theme !== 'system') { root.dataset.theme = opts.theme; themeSetByApp = true; }
+  else if (themeSetByApp) { delete root.dataset.theme; themeSetByApp = false; }
   root.style.setProperty('--scale', opts.fontScale);
 }
 
@@ -99,22 +109,25 @@ function show(name) {
 }
 
 function route() {
-  const hash = location.hash.slice(1) || '/';
-  const [path, query = ''] = hash.split('?');
-  const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
-  if (parts[0] === 'e' && parts[1]) return showEntry(Number(parts[1]));
-  if (parts[0] === 'browse') return parts[1] ? showLetter(parts[1]) : showBrowse();
-  if (parts[0] === 'saved') return showSaved();
-  if (parts[0] === 'settings') return showSettings();
-  if (parts[0] === 'about') return showAbout();
-  const params = new URLSearchParams(query);
-  const q = params.get('q') ?? '';
-  const mode = params.get('m') === 'hi' ? 'hi' : 'sa';
-  if ($('#q').value !== q) $('#q').value = q;
-  setMode(mode, false);
-  state.q = q;
+  const hash = decodeURIComponent(location.hash.slice(1));
+  let m;
+  if ((m = hash.match(/^e-(\d+)$/))) return showEntry(Number(m[1]));
+  if ((m = hash.match(/^browse-(\d+)$/))) return showLetter(LETTERS[Number(m[1])] || LETTERS[0]);
+  if (hash === 'browse') return showBrowse();
+  if (hash === 'saved') return showSaved();
+  if (hash === 'options') return showSettings();
+  if (hash === 'about') return showAbout();
   show('search');
   renderSearch();
+}
+
+/** Run a search from code (recent-search chips, "search Hindi meanings"). */
+function runSearch(q, mode) {
+  $('#q').value = q;
+  state.q = q;
+  setMode(mode === 'hi' ? 'hi' : 'sa', false);
+  if (location.hash !== '#search') location.hash = '#search';
+  else { show('search'); renderSearch(); }
 }
 
 // ------------------------------------------------------------------ search
@@ -126,9 +139,7 @@ function wireInput() {
     clearTimeout(timer);
     timer = setTimeout(() => {
       state.q = input.value;
-      // replaceState: typing should not create a history entry per keystroke.
-      const hash = `#/?${new URLSearchParams({ q: state.q, m: state.mode })}`;
-      if (location.hash !== hash) history.replaceState(null, '', hash);
+      if ($('#view-search').hidden) location.hash = '#search';
       show('search');
       renderSearch();
     }, 90);
@@ -136,17 +147,20 @@ function wireInput() {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { recent.addSearch(input.value, state.mode); input.blur(); }
   });
-  input.addEventListener('focus', () => { if (!$('#view-search').hidden) return; location.hash = `#/?${new URLSearchParams({ q: input.value, m: state.mode })}`; });
+  input.addEventListener('focus', () => { if ($('#view-search').hidden) location.hash = '#search'; });
   $('#mode').addEventListener('click', () => {
     setMode(state.mode === 'sa' ? 'hi' : 'sa', true);
-    history.replaceState(null, '', `#/?${new URLSearchParams({ q: state.q, m: state.mode })}`);
+    if ($('#view-search').hidden) location.hash = '#search';
     show('search');
     renderSearch();
     input.focus();
   });
-  // Remember the query when a result is opened.
+  // Remember the query when a result is opened; recent-search chips and
+  // the "search Hindi meanings" button run a search.
   $('#view-search').addEventListener('click', (e) => {
     if (e.target.closest('.list a')) recent.addSearch(state.q, state.mode);
+    const b = e.target.closest('[data-q]');
+    if (b) runSearch(b.dataset.q, b.dataset.m);
   });
 }
 
@@ -184,7 +198,7 @@ function renderSearch() {
   const results = dict.search(q);
   if (!results.length) {
     view.innerHTML = `<p class="empty">कोई शब्द नहीं मिला।<br>
-      <a href="#/?${esc(new URLSearchParams({ q, m: 'hi' }))}">हिन्दी अर्थों में खोजें</a></p>`;
+      <button class="btn" type="button" data-q="${esc(q)}" data-m="hi">हिन्दी अर्थों में खोजें</button></p>`;
     return;
   }
   const fuzzy = results[0].score >= 4; // typo band only (see search.js)
@@ -198,12 +212,12 @@ function searchHome() {
   let h = '';
   if (searches.length) {
     h += '<h2 class="section">हाल की खोजें · Recent searches</h2><div class="chips">'
-      + searches.slice(0, 12).map((r) => `<a class="chip" href="#/?${esc(new URLSearchParams({ q: r.q, m: r.mode }))}">${esc(r.q)}${r.mode === 'hi' ? ' <small class="muted">हि</small>' : ''}</a>`).join('')
+      + searches.slice(0, 12).map((r) => `<button type="button" class="chip" data-q="${esc(r.q)}" data-m="${esc(r.mode)}">${esc(r.q)}${r.mode === 'hi' ? ' <small class="muted">हि</small>' : ''}</button>`).join('')
       + '</div>';
   }
   if (seen.length) {
     h += '<h2 class="section">हाल में देखे · Recently viewed</h2><div class="chips">'
-      + seen.slice(0, 12).map((r) => `<a class="chip" href="#/e/${r.id}">${esc(r.headword)}</a>`).join('') + '</div>';
+      + seen.slice(0, 12).map((r) => `<a class="chip" href="#e-${r.id}">${esc(r.headword)}</a>`).join('') + '</div>';
   }
   h += `<h2 class="section">खोजने के तरीके · How to search</h2>
     <div class="prose small muted">
@@ -236,15 +250,17 @@ function showEntry(id) {
     </div>
     ${article(e, opts, id)}
     <nav class="pager">
-      ${prev ? `<a class="btn" href="#/e/${prev.id}">← ${esc(prev.headword)}</a>` : '<span></span>'}
-      ${next ? `<a class="btn" href="#/e/${next.id}">${esc(next.headword)} →</a>` : '<span></span>'}
+      ${prev ? `<a class="btn" href="#e-${prev.id}">← ${esc(prev.headword)}</a>` : '<span></span>'}
+      ${next ? `<a class="btn" href="#e-${next.id}">${esc(next.headword)} →</a>` : '<span></span>'}
     </nav>
-    <p class="note small">${esc(e.src_file)} · lexhead ${esc(e.lexhead_no)}</p>`;
+    <p class="note small">${e.book_page
+      ? `मुद्रित पृष्ठ ${esc(e.book_page)} (PDF ${esc(e.page)})`
+      : `${esc(e.src_file)} · lexhead ${esc(e.lexhead_no)}`}</p>`;
   view.onclick = (ev) => {
     const act = ev.target.closest('[data-act]')?.dataset.act;
     if (act === 'back') {
       if (state.navCount > 0) history.back();
-      else location.hash = '#/';
+      else location.hash = '#search';
     } else if (act === 'star') {
       const on = bookmarks.toggle({ id: e.id, headword: e.headword, grammar: e.grammar_text, gloss });
       ev.target.setAttribute('aria-pressed', on);
@@ -275,6 +291,8 @@ const LETTER_GROUPS = [
   ['कवर्ग', 'क ख ग घ ङ'], ['चवर्ग', 'च छ ज झ ञ'], ['टवर्ग', 'ट ठ ड ढ ण'],
   ['तवर्ग', 'त थ द ध न'], ['पवर्ग', 'प फ ब भ म'], ['अन्तःस्थ', 'य र ल व'], ['ऊष्म', 'श ष स ह'],
 ];
+// Flat letter list: #browse-<n> addresses LETTERS[n] (hash names are ASCII).
+const LETTERS = LETTER_GROUPS.flatMap(([, letters]) => letters.split(' '));
 
 function showBrowse() {
   show('browse');
@@ -283,7 +301,7 @@ function showBrowse() {
     + LETTER_GROUPS.map(([label, letters]) => `<div class="group-label">${label}</div><div class="letters">${
       letters.split(' ').map((l) => {
         const n = counts.get(l) || 0;
-        return `<a href="#/browse/${encodeURIComponent(l)}" class="${n ? '' : 'none'}">${l}<small>${n}</small></a>`;
+        return `<a href="#browse-${LETTERS.indexOf(l)}" class="${n ? '' : 'none'}">${l}<small>${n}</small></a>`;
       }).join('')}</div>`).join('');
 }
 
@@ -291,7 +309,7 @@ function showLetter(letter) {
   show('browse');
   const view = $('#view-browse');
   const total = dict.letterCounts().get(letter) || 0;
-  view.innerHTML = `<div class="entry-bar"><a class="icon-btn btn" href="#/browse" aria-label="All letters">←</a>
+  view.innerHTML = `<div class="entry-bar"><a class="icon-btn btn" href="#browse" aria-label="All letters">←</a>
     <h2 class="section" style="margin:0">${esc(letter)} · ${total} शब्द</h2></div><ul class="list" id="letter-list"></ul>
     <button class="btn more" type="button" id="more">और · more</button>`;
   const list = $('#letter-list');
@@ -323,13 +341,21 @@ function showSaved() {
       ? `<ul class="list">${marks.map((b) => resultRow(b)).join('')}</ul>`
       : '<p class="empty">No bookmarks yet. Tap ☆ on an entry to save it here.</p>')
     + (seen.length ? `<h2 class="section">हाल में देखे · Recently viewed</h2><div class="chips">${
-      seen.map((r) => `<a class="chip" href="#/e/${r.id}">${esc(r.headword)}</a>`).join('')}</div>` : '')
+      seen.map((r) => `<a class="chip" href="#e-${r.id}">${esc(r.headword)}</a>`).join('')}</div>` : '')
     + `<p style="margin-top:24px">${marks.length ? '<button class="btn" data-act="clear-marks">Clear bookmarks</button> ' : ''}
        ${seen.length || recent.searches().length ? '<button class="btn" data-act="clear-recent">Clear history</button>' : ''}</p>`;
   view.onclick = (e) => {
     const act = e.target.dataset.act;
-    if (act === 'clear-marks' && confirm('Remove all bookmarks?')) { bookmarks.clear(); showSaved(); }
-    if (act === 'clear-recent' && confirm('Clear recent searches and viewed entries?')) { recent.clear(); showSaved(); }
+    // Two clicks instead of confirm(), which embedded viewers suppress.
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    if (b.dataset.armed !== 'yes') {
+      b.dataset.armed = 'yes';
+      b.textContent = 'Tap again to confirm';
+      return;
+    }
+    if (act === 'clear-marks') { bookmarks.clear(); showSaved(); }
+    if (act === 'clear-recent') { recent.clear(); showSaved(); }
   };
 }
 
@@ -350,7 +376,7 @@ async function showSettings() {
     <div class="setting switch"><label for="cats">Show semantic categories (जाति, उपाधि…)</label>
       <input id="cats" type="checkbox" ${opts.showCategories ? 'checked' : ''}></div>
     <div class="setting"><label class="t">Offline</label><span id="offline" class="small muted">Checking…</span></div>
-    <p><a class="btn" href="#/about">About & credits</a></p>`;
+    <p><a class="btn" href="#about">About & credits</a></p>`;
   view.onclick = (e) => {
     const b = e.target.closest('.seg-ctl button');
     if (!b) return;
@@ -382,6 +408,23 @@ function showAbout() {
   let counts = {};
   try { counts = JSON.parse(m.counts); } catch { /* old database */ }
   const commit = m.source_commit || '';
+  if (m.about_html) {
+    // Database built from the printed edition: it carries its own credits.
+    // (about_html is written by our own build script, not by users.)
+    $('#view-about').innerHTML = `<div class="prose">
+      <h1>${esc(m.title || 'आप्टे संस्कृत-हिन्दी शब्दकोश')}</h1>
+      ${m.about_html}
+      <h2>Software</h2>
+      <ul>
+        <li>Typeface: <b>Noto Serif Devanagari</b> by the Noto Project, SIL Open Font License 1.1.</li>
+        <li>Database engine: <b>SQLite</b> (public domain), compiled to WebAssembly by the SQLite project.</li>
+      </ul>
+      <p class="small muted">Built ${esc(m.built_at || '')} · app ${esc(APP_VERSION)}</p>
+      <p><a class="btn" href="#options">← Settings</a></p>
+    </div>`;
+    window.scrollTo(0, 0);
+    return;
+  }
   $('#view-about').innerHTML = `<div class="prose">
     <h1>आप्टे संस्कृत-हिन्दी कोश</h1>
     <p>An offline edition of <b>Vaman Shivram Apte’s Sanskrit-Hindi Kosh</b>, the Hindi version of
@@ -407,7 +450,7 @@ function showAbout() {
     source are shown as <code>०</code> (पुं०, नपुं०). Headwords are shown exactly as in the source. Errors in the
     text belong to the digital source; please report them to the Samsaadhanii project.</p>
     <p class="small muted">Built ${esc(m.built_at || '')} · app ${esc(APP_VERSION)}</p>
-    <p><a class="btn" href="#/settings">← Settings</a></p>
+    <p><a class="btn" href="#options">← Settings</a></p>
   </div>`;
   window.scrollTo(0, 0);
 }

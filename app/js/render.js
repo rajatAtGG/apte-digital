@@ -26,6 +26,7 @@ export function runs(rs) {
 const SEMANTIC_LABEL = { jAwi: 'जाति', upAXi: 'उपाधि', kind_of: 'प्रकार', is_a_part: 'अंग' };
 const KIND_LABEL = {
   segmenthd: 'उपशब्द', subsegmenthd: 'उपशब्द', compound: 'समास', sublexhd: 'उपशब्द', compoundverb: 'क्रिया',
+  form: 'रूप',
 };
 
 function headline(e, big) {
@@ -33,9 +34,10 @@ function headline(e, big) {
 }
 
 /** Grammar, stems, segmentation and etymology as one line. */
-function metaLine(e, opts) {
+function metaLine(e, opts, sub = false) {
   const parts = [];
-  for (const g of e.grammar || []) {
+  // A sub-entry's grammar label is already shown in its summary line.
+  for (const g of sub ? [] : e.grammar || []) {
     const html = runs(g);
     if (html.trim()) parts.push(`<span class="g">${html}</span>`);
   }
@@ -50,11 +52,14 @@ function metaLine(e, opts) {
   return parts.length ? `<div class="meta-line">${parts.join(' ')}</div>` : '';
 }
 
-function body(e, opts) {
-  let h = metaLine(e, opts);
+function body(e, opts, sub = false) {
+  let h = metaLine(e, opts, sub);
   if (e.senses?.length) {
-    h += '<ol class="senses">' + e.senses.map((s, i) =>
-      `<li><span class="n">${esc(s.n || i + 1)}.</span><span>${runs(s.runs)}</span></li>`).join('') + '</ol>';
+    // A single unnumbered sense gets no number, as in print.
+    const plain = e.senses.length === 1 && !e.senses[0].n;
+    h += '<ol class="senses">' + e.senses.map((s, i) => (plain
+      ? `<li class="plain"><span>${runs(s.runs)}</span></li>`
+      : `<li><span class="n">${esc(s.n || i + 1)}.</span><span>${runs(s.runs)}</span></li>`)).join('') + '</ol>';
   }
   if (e.notes?.length) h += `<p class="notes">${e.notes.map(abbr).join(' · ')}</p>`;
   if (opts.showCategories && e.semantic?.length) {
@@ -74,8 +79,12 @@ function subEntry(e, opts, openIds) {
   const open = openIds.has(e.id) ? ' open' : '';
   const kind = KIND_LABEL[e.kind] ? `<span class="kind">${KIND_LABEL[e.kind]}</span>` : '';
   const gram = e.grammar_text ? `<span class="gram">${abbr(e.grammar_text)}</span>` : '';
-  return `<details class="sub" id="e${e.id}"${open}><summary>${headline(e)}${gram}${kind}</summary>
-    <div class="sub-body">${body(e, opts)}${e.children.map((c) => subEntry(c, opts, openIds)).join('')}</div></details>`;
+  // Printed edition: compound/derived heads are printed as fragments (-पथः);
+  // show the reconstructed full form (अघोरपथः) beside them.
+  const full = (e.full || []).filter((f, i) => f && f !== (e.heads || [])[i]);
+  const fullHtml = full.length ? `<span class="full">= ${esc(full.join(', '))}</span>` : '';
+  return `<details class="sub" id="e${e.id}"${open}><summary>${headline(e)}${fullHtml}${gram}${kind}</summary>
+    <div class="sub-body">${body(e, opts, Boolean(e.grammar_text))}${e.children.map((c) => subEntry(c, opts, openIds)).join('')}</div></details>`;
 }
 
 /** Full article for a main entry tree (from Dictionary.entry). `focusId`
@@ -100,7 +109,7 @@ export function resultRow(r, extra = '') {
     ? `<span class="under">↳ ${esc(r.main_headword)} के अन्तर्गत</span>` : '';
   const gram = r.grammar ? `<span class="gram">${abbr(r.grammar)}</span>` : '';
   const gloss = r.gloss ? `<span class="gloss">${abbr(r.gloss)}</span>` : '';
-  return `<li><a href="#/e/${r.id}">${under}${headline(r)}${gram}${extra || gloss}</a></li>`;
+  return `<li><a href="#e-${r.id}">${under}${headline(r)}${gram}${extra || gloss}</a></li>`;
 }
 
 /** Highlight occurrences of (normalised) query words in a sense snippet. */

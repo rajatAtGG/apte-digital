@@ -52,6 +52,31 @@ def crops(args):
     print(f"{len(keys)} line crops for {sum(1 for f in findings if f['type'] in types)} findings in {args.out}")
 
 
+def crop_keys(args):
+    """Crop the lines named by "STRIP#LINE" keys (e.g. the suspect entry
+    lines from pipeline/build_print.py) from one or more strip folders."""
+    manifest = {}
+    for d in args.strips:
+        for s in json.load(open(os.path.join(d, "manifest.json"))):
+            manifest[s["id"]] = s
+    keys = sorted(set(args.keys))
+    os.makedirs(args.out, exist_ok=True)
+    done = []
+    for key in keys:
+        sid, i = key.split("#")
+        strip = manifest[sid]
+        i = int(i)
+        if i >= len(strip["lines"]):
+            continue
+        im = Image.open(os.path.join(args.pages, f"p-{strip['page']:04d}.png"))
+        x0, _, x1, _ = strip["box"]
+        _, y0, _, y1 = strip["lines"][i]
+        im.crop((x0, max(y0 - 10, 0), x1, min(y1 + 10, im.height))).save(os.path.join(args.out, safe(key) + ".png"))
+        done.append(key)
+    json.dump(done, open(os.path.join(args.out, "keys.json"), "w"), indent=0)
+    print(f"{len(done)} line crops in {args.out}")
+
+
 def collect(args):
     keys = json.load(open(os.path.join(args.dir, "keys.json")))
     override, missing = {}, []
@@ -80,11 +105,16 @@ def main():
     c.add_argument("--pages", required=True)
     c.add_argument("--out", required=True)
     c.add_argument("--types", default=DEFAULT_TYPES)
+    kk = sub.add_parser("keys", help="crop lines given as STRIP#LINE keys")
+    kk.add_argument("keys", nargs="+")
+    kk.add_argument("--strips", nargs="+", required=True)
+    kk.add_argument("--pages", required=True)
+    kk.add_argument("--out", required=True)
     k = sub.add_parser("collect")
     k.add_argument("dir")
     k.add_argument("--out", required=True)
     args = ap.parse_args()
-    crops(args) if args.cmd == "crops" else collect(args)
+    {"crops": crops, "keys": crop_keys, "collect": collect}[args.cmd](args)
 
 
 if __name__ == "__main__":
