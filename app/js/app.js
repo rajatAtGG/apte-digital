@@ -7,7 +7,7 @@
 //   #browse, #browse-<n> (n = index in the letter list), #saved, #options, #about
 
 import sqlite3InitModule from '../vendor/sqlite3/index.mjs';
-import { DB_URL, DB_GZ_BYTES, APP_VERSION } from './config.js';
+import { DB_URL, DB_GZ_BYTES, DB_PARTS, APP_VERSION } from './config.js';
 import { Dictionary, openDatabase, runsText } from './dict.js';
 import { settings, bookmarks, recent } from './store.js';
 import { esc, article, resultRow, highlight } from './render.js';
@@ -22,23 +22,27 @@ const state = { q: '', mode: 'sa', navCount: 0 };
 // ------------------------------------------------------------ database load
 
 async function fetchDatabase(onProgress) {
-  const res = await fetch(DB_URL);
-  if (!res.ok) throw new Error(`Could not download the dictionary (HTTP ${res.status}).`);
-  const total = Number(res.headers.get('content-length')) || DB_GZ_BYTES;
-  const reader = res.body.getReader();
+  // The database is one file, or several parts (DB_PARTS) joined in order.
+  const urls = DB_PARTS.length ? DB_PARTS : [DB_URL];
   const chunks = [];
   let loaded = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    onProgress(Math.min(loaded / total, 1));
+  for (const url of urls) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Could not download the dictionary (HTTP ${res.status}).`);
+    const total = urls.length > 1 ? DB_GZ_BYTES : Number(res.headers.get('content-length')) || DB_GZ_BYTES;
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      onProgress(Math.min(loaded / total, 1));
+    }
   }
   let bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
   // Hosts that serve no binary archives (a Claude artifact) get the gzipped
   // database as base64 text ("….b64.txt").
-  if (DB_URL.endsWith('.b64.txt')) {
+  if (urls[0].endsWith('.b64.txt')) {
     const text = new TextDecoder().decode(bytes).replace(/\s+/g, '');
     bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
   }

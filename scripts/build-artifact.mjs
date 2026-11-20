@@ -38,15 +38,23 @@ for (const p of walk(DIST)) {
 // base64 text and point config.js at it (the app decodes "….b64.txt").
 const dbKey = Object.keys(files).find((k) => k.startsWith('data/') && k.endsWith('.sqlite.gz'));
 if (dbKey) {
+  // Files are limited to 16 MB: split the text into parts of at most 12 MB
+  // (the app fetches DB_PARTS in order and joins them before decoding).
   const b64 = readFileSync(files[dbKey]).toString('base64');
-  const b64Name = `${dbKey}.b64.txt`;
+  const PART = Number(process.env.PART_BYTES) || 12_000_000;
+  const parts = [];
   mkdirSync(join(OUT, 'data'), { recursive: true });
-  writeFileSync(join(OUT, b64Name), b64);
+  for (let i = 0; i * PART < b64.length; i++) {
+    const name = b64.length <= PART ? `${dbKey}.b64.txt` : `${dbKey}.${i + 1}.b64.txt`;
+    writeFileSync(join(OUT, name), b64.slice(i * PART, (i + 1) * PART));
+    files[name] = join(OUT, name);
+    parts.push(name);
+  }
   delete files[dbKey];
-  files[b64Name] = join(OUT, b64Name);
   const config = readFileSync(files['js/config.js'], 'utf8')
-    .replace(/DB_URL = '[^']*'/, `DB_URL = '${b64Name}'`)
-    .replace(/DB_GZ_BYTES = \d+/, `DB_GZ_BYTES = ${b64.length}`);
+    .replace(/DB_URL = '[^']*'/, `DB_URL = '${parts[0]}'`)
+    .replace(/DB_GZ_BYTES = \d+/, `DB_GZ_BYTES = ${b64.length}`)
+    .replace(/DB_PARTS = \[[^\]]*\]/, `DB_PARTS = ${JSON.stringify(parts.length > 1 ? parts : [])}`);
   mkdirSync(join(OUT, 'js'), { recursive: true });
   writeFileSync(join(OUT, 'js', 'config.js'), config);
   files['js/config.js'] = join(OUT, 'js', 'config.js');
