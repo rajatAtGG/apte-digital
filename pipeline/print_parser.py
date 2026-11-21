@@ -342,12 +342,7 @@ def segment(lines):
             lead.append(text)
     if cur:
         entries.append((cur_page, cur))
-    parsed = []
-    for page, ls in entries:
-        text = join_lines(ls)
-        e = parse_entry(text, page)
-        e["text"] = text  # the entry exactly as transcribed (lines joined)
-        parsed.append(e)
+    parsed = [parse_entry(join_lines(ls), page) for page, ls in entries]
     for e, i in zip(parsed, starts):
         e["line_index"] = i
     return lead, parsed
