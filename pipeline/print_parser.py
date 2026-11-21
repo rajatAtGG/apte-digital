@@ -201,9 +201,30 @@ def full_form(fragment, headword, compound, previous=None):
     return derive(frag, headword)
 
 
+DEVANAGARI_LETTER = re.compile("[अ-हक़-ॡॲ-ॿ]")
+
+
+def unbold_non_words(text):
+    """Bold runs without a letter are not sub-entry heads: sense numbers
+    (**1**. or **2** without its dot), homonym numerals (**ii**), stray
+    marks. Drop their bold; a bare sense number gets its dot back so that
+    split_senses sees "2."."""
+    def repl(m):
+        inner = m.group(1).strip()
+        if DEVANAGARI_LETTER.search(inner):
+            return m.group(0)
+        num = re.fullmatch(r"(\d{1,2})\s*\.?", inner)
+        if num:
+            followed_by_dot = text[m.end():m.end() + 1] == "."
+            return num.group(1) + ("" if followed_by_dot else ".")
+        return inner
+    return BOLD.sub(repl, text)
+
+
 def parse_body(text, headword):
     """Split an entry's running text after the head into the main part and
     bold sub-entries (derived forms and compounds)."""
+    text = unbold_non_words(text)
     pieces = []  # (bold heads, is_compound, text after)
     pos = 0
     main_text = None
