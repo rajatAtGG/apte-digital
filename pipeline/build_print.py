@@ -23,6 +23,7 @@ with --override (see tools/scan_compare/recheck.py).
 
 import argparse
 import json
+import re
 import os
 import sqlite3
 import sys
@@ -45,6 +46,31 @@ def runs_text(runs, skip=("citation",)):
         elif r[0] not in skip:
             parts.append(" " + runs_text(r[1:], skip) + " ")
     return " ".join("".join(parts).split())
+
+
+# A run-in entry starts after a danda with a bold headword followed by its
+# grammar label or etymology: "...। **अंशकम्** [अंश+ण्वुल्] ..."
+RUNIN_START = re.compile(r"(?<=।)\s+(?=(?:\*\*[^*]+\*\*\s*,?\s*)+[(\[])")
+
+
+def select_pages(lines, skip_pages="", runin_from=0):
+    """Drop the skipped page ranges and, from `runin_from` on, split lines
+    that hold several run-in entries (the book's supplement is printed so)."""
+    skip = set()
+    for part in filter(None, skip_pages.split(",")):
+        a, _, b = part.partition("-")
+        skip.update(range(int(a), int(b or a) + 1))
+    out = []
+    for page, text, edge, key in lines:
+        if page in skip:
+            continue
+        if runin_from and page >= runin_from:
+            pieces = RUNIN_START.split(text)
+            out.append((page, pieces[0], edge, key))
+            out.extend((page, p, True, key) for p in pieces[1:] if p.strip())
+        else:
+            out.append((page, text, edge, key))
+    return out
 
 
 def find_suspects(entries):
@@ -75,6 +101,7 @@ def find_suspects(entries):
 def build(args):
     override = json.load(open(args.override, encoding="utf-8")) if args.override else {}
     lines, missing = load_lines(args.strips, args.text, args.first_page, args.last_page, override)
+    lines = select_pages(lines, args.skip_pages, args.runin_from)
     # Remember which source line starts each entry (for re-reading suspects).
     lead, entries = segment([(p, t, e) for (p, t, e, k) in lines])
     for e in entries:
@@ -134,7 +161,10 @@ def build(args):
         "(Kamal Prakashan, New Delhi; second revised edition).</p>"
         f"<p>Coverage so far: printed pages {pages[0] - FRONT_MATTER_PAGES}–{pages[-1] - FRONT_MATTER_PAGES} "
         f"(PDF pages {pages[0]}–{pages[-1]}): {len(entries):,} entries and {n_sub:,} compounds and derived forms."
-        "</p><p>Text was transcribed from the page images by Claude (Sonnet 5.5), with doubtful lines re-read "
+        + (f" The book's supplementary word list (परिशिष्ट, from printed page {args.runin_from - FRONT_MATTER_PAGES}) "
+           "is included after the main entries; the prose appendices (names, prosody, places) are not."
+           if args.runin_from else "")
+        + "</p><p>Text was transcribed from the page images by Claude (Sonnet 5.5), with doubtful lines re-read "
         "by Claude (Opus 5.5). Transcription follows the print exactly, including its misprints. "
         "Compound headwords are printed in the book as fragments (-पथः); the full form shown beside them "
         "(अघोरपथः) is reconstructed and may occasionally miss a sandhi.</p>"
@@ -184,5 +214,9 @@ if __name__ == "__main__":
     ap.add_argument("--first-page", type=int, default=19)
     ap.add_argument("--last-page", type=int, default=10**6)
     ap.add_argument("--override")
+    ap.add_argument("--skip-pages", default="",
+                    help="page ranges to leave out, e.g. 1294-1316 (appendices that are not word lists)")
+    ap.add_argument("--runin-from", type=int, default=0,
+                    help="from this page on, entries are printed run-in (several per line) and are split")
     ap.add_argument("--out", required=True)
     build(ap.parse_args())
