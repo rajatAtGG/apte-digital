@@ -73,6 +73,21 @@ def select_pages(lines, skip_pages="", runin_from=0):
     return out
 
 
+def write_plain_export(entries, out_dir):
+    """Headword and entry text exactly as transcribed, one entry per line:
+    entries_text.jsonl ({"headword", "page", "book_page", "text"}, bold kept
+    as **...**) and entries_text.tsv (same fields, bold marks dropped)."""
+    with open(os.path.join(out_dir, "entries_text.jsonl"), "w", encoding="utf-8") as j, \
+         open(os.path.join(out_dir, "entries_text.tsv"), "w", encoding="utf-8") as t:
+        t.write("headword\tpdf_page\tprinted_page\ttext\n")
+        for e in entries:
+            head = ", ".join(e["heads"])
+            row = {"headword": head, "page": e["page"], "book_page": e["page"] - FRONT_MATTER_PAGES, "text": e["text"]}
+            j.write(json.dumps(row, ensure_ascii=False) + "\n")
+            plain = " ".join(e["text"].replace("**", "").split())
+            t.write(f"{head}\t{e['page']}\t{e['page'] - FRONT_MATTER_PAGES}\t{plain}\n")
+
+
 def find_suspects(entries):
     """Entries whose headword is out of varnamala order with respect to both
     neighbours (an isolated dip or spike), or that lack a label or senses."""
@@ -190,6 +205,7 @@ def build(args):
     json.dump({"lead": lead, "entries": entries}, open(os.path.join(args.out, "entries.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=0)
     json.dump(suspects, open(os.path.join(args.out, "suspects.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    write_plain_export(entries, args.out)
     by_reason = {}
     for s in suspects:
         for r in s["reasons"]:
